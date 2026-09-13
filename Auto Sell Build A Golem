@@ -1,0 +1,572 @@
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+
+local LocalPlayer = Players.LocalPlayer
+local Backpack = LocalPlayer:WaitForChild("Backpack")
+local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+
+local SellEvent
+pcall(function()
+    SellEvent = ReplicatedStorage.rbxts_include.node_modules["@rbxts"].remo.src.container["requests.sell"]
+end)
+
+local ItemsToSell = {}
+local AutoSellEnabled = false
+local SellDelay = 0.15
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "BAG_AutoSell"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent = game:GetService("CoreGui")
+
+local ToggleButton = Instance.new("TextButton")
+ToggleButton.Name = "ToggleButton"
+ToggleButton.Size = UDim2.new(0, 45, 0, 45)
+ToggleButton.Position = UDim2.new(0, 20, 0, 20)
+ToggleButton.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+ToggleButton.BorderSizePixel = 0
+ToggleButton.Text = "M"
+ToggleButton.TextColor3 = Color3.fromRGB(230, 30, 30)
+ToggleButton.TextScaled = true
+ToggleButton.Font = Enum.Font.GothamBold
+ToggleButton.AutoButtonColor = false
+ToggleButton.Active = true
+ToggleButton.Draggable = true
+ToggleButton.Parent = ScreenGui
+
+local ToggleCorner = Instance.new("UICorner")
+ToggleCorner.CornerRadius = UDim.new(0, 10)
+ToggleCorner.Parent = ToggleButton
+
+local ToggleStroke = Instance.new("UIStroke")
+ToggleStroke.Color = Color3.fromRGB(230, 30, 30)
+ToggleStroke.Thickness = 1.5
+ToggleStroke.Transparency = 0.3
+ToggleStroke.Parent = ToggleButton
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainFrame"
+MainFrame.Size = UDim2.new(0, 320, 0, 400)
+MainFrame.Position = UDim2.new(0.5, -160, 0.5, -200)
+MainFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.Visible = false
+MainFrame.ZIndex = 2
+MainFrame.Parent = ScreenGui
+
+local MainCorner = Instance.new("UICorner")
+MainCorner.CornerRadius = UDim.new(0, 12)
+MainCorner.Parent = MainFrame
+
+local MainStroke = Instance.new("UIStroke")
+MainStroke.Color = Color3.fromRGB(180, 20, 20)
+MainStroke.Thickness = 1.5
+MainStroke.Transparency = 0.2
+MainStroke.Parent = MainFrame
+
+local TitleBar = Instance.new("Frame")
+TitleBar.Name = "TitleBar"
+TitleBar.Size = UDim2.new(1, 0, 0, 40)
+TitleBar.BackgroundColor3 = Color3.fromRGB(30, 5, 5)
+TitleBar.BorderSizePixel = 0
+TitleBar.ZIndex = 3
+TitleBar.Parent = MainFrame
+
+local TitleCorner = Instance.new("UICorner")
+TitleCorner.CornerRadius = UDim.new(0, 12)
+TitleCorner.Parent = TitleBar
+
+local TitleFix = Instance.new("Frame")
+TitleFix.Size = UDim2.new(1, 0, 0, 12)
+TitleFix.Position = UDim2.new(0, 0, 1, -12)
+TitleFix.BackgroundColor3 = Color3.fromRGB(30, 5, 5)
+TitleFix.BorderSizePixel = 0
+TitleFix.ZIndex = 3
+TitleFix.Parent = TitleBar
+
+local TitleLabel = Instance.new("TextLabel")
+TitleLabel.Size = UDim2.new(1, -90, 1, 0)
+TitleLabel.Position = UDim2.new(0, 12, 0, 0)
+TitleLabel.BackgroundTransparency = 1
+TitleLabel.Text = "Build A Golem auto sell"
+TitleLabel.TextColor3 = Color3.fromRGB(240, 60, 60)
+TitleLabel.Font = Enum.Font.GothamBold
+TitleLabel.TextSize = 15
+TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+TitleLabel.ZIndex = 4
+TitleLabel.Parent = TitleBar
+
+local ByLabel = Instance.new("TextLabel")
+ByLabel.Size = UDim2.new(1, -90, 1, 0)
+ByLabel.Position = UDim2.new(0, 12, 0, 0)
+ByLabel.BackgroundTransparency = 1
+ByLabel.Text = "by maksimka"
+ByLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+ByLabel.TextTransparency = 0.55
+ByLabel.Font = Enum.Font.Gotham
+ByLabel.TextSize = 12
+ByLabel.TextXAlignment = Enum.TextXAlignment.Right
+ByLabel.ZIndex = 4
+ByLabel.Parent = TitleBar
+
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Size = UDim2.new(0, 26, 0, 26)
+CloseBtn.Position = UDim2.new(1, -60, 0, 7)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(60, 10, 10)
+CloseBtn.BorderSizePixel = 0
+CloseBtn.Text = "×"
+CloseBtn.TextColor3 = Color3.fromRGB(255, 90, 90)
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.TextSize = 18
+CloseBtn.AutoButtonColor = false
+CloseBtn.ZIndex = 5
+CloseBtn.Parent = TitleBar
+
+local CloseCorner = Instance.new("UICorner")
+CloseCorner.CornerRadius = UDim.new(0, 6)
+CloseCorner.Parent = CloseBtn
+
+local DestroyBtn = Instance.new("TextButton")
+DestroyBtn.Size = UDim2.new(0, 26, 0, 26)
+DestroyBtn.Position = UDim2.new(1, -32, 0, 7)
+DestroyBtn.BackgroundColor3 = Color3.fromRGB(120, 0, 0)
+DestroyBtn.BorderSizePixel = 0
+DestroyBtn.Text = "⏻"
+DestroyBtn.TextColor3 = Color3.fromRGB(255, 200, 200)
+DestroyBtn.Font = Enum.Font.GothamBold
+DestroyBtn.TextSize = 16
+DestroyBtn.AutoButtonColor = false
+DestroyBtn.ZIndex = 5
+DestroyBtn.Parent = TitleBar
+
+local DestroyCorner = Instance.new("UICorner")
+DestroyCorner.CornerRadius = UDim.new(0, 6)
+DestroyCorner.Parent = DestroyBtn
+
+local InputBox = Instance.new("TextBox")
+InputBox.Size = UDim2.new(1, -24, 0, 34)
+InputBox.Position = UDim2.new(0, 12, 0, 52)
+InputBox.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
+InputBox.BorderSizePixel = 0
+InputBox.Text = ""
+InputBox.PlaceholderText = "Введите название предмета..."
+InputBox.PlaceholderColor3 = Color3.fromRGB(120, 120, 120)
+InputBox.TextColor3 = Color3.fromRGB(240, 240, 240)
+InputBox.Font = Enum.Font.Gotham
+InputBox.TextSize = 13
+InputBox.ClearTextOnFocus = false
+InputBox.ZIndex = 4
+InputBox.Parent = MainFrame
+
+local InputCorner = Instance.new("UICorner")
+InputCorner.CornerRadius = UDim.new(0, 8)
+InputCorner.Parent = InputBox
+
+local InputStroke = Instance.new("UIStroke")
+InputStroke.Color = Color3.fromRGB(180, 20, 20)
+InputStroke.Thickness = 1
+InputStroke.Transparency = 0.5
+InputStroke.Parent = InputBox
+
+local AddBtn = Instance.new("TextButton")
+AddBtn.Size = UDim2.new(1, -24, 0, 30)
+AddBtn.Position = UDim2.new(0, 12, 0, 92)
+AddBtn.BackgroundColor3 = Color3.fromRGB(140, 20, 20)
+AddBtn.BorderSizePixel = 0
+AddBtn.Text = "+ Добавить предмет"
+AddBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+AddBtn.Font = Enum.Font.GothamBold
+AddBtn.TextSize = 13
+AddBtn.AutoButtonColor = false
+AddBtn.ZIndex = 4
+AddBtn.Parent = MainFrame
+
+local AddCorner = Instance.new("UICorner")
+AddCorner.CornerRadius = UDim.new(0, 8)
+AddCorner.Parent = AddBtn
+
+local ListFrame = Instance.new("ScrollingFrame")
+ListFrame.Size = UDim2.new(1, -24, 0, 160)
+ListFrame.Position = UDim2.new(0, 12, 0, 130)
+ListFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+ListFrame.BorderSizePixel = 0
+ListFrame.ScrollBarThickness = 4
+ListFrame.ScrollBarImageColor3 = Color3.fromRGB(180, 20, 20)
+ListFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+ListFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+ListFrame.ZIndex = 4
+ListFrame.Parent = MainFrame
+
+local ListCorner = Instance.new("UICorner")
+ListCorner.CornerRadius = UDim.new(0, 8)
+ListCorner.Parent = ListFrame
+
+local ListLayout = Instance.new("UIListLayout")
+ListLayout.Padding = UDim.new(0, 4)
+ListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+ListLayout.Parent = ListFrame
+
+local ListPadding = Instance.new("UIPadding")
+ListPadding.PaddingTop = UDim.new(0, 6)
+ListPadding.PaddingLeft = UDim.new(0, 6)
+ListPadding.PaddingRight = UDim.new(0, 6)
+ListPadding.PaddingBottom = UDim.new(0, 6)
+ListPadding.Parent = ListFrame
+
+local ToggleFrame = Instance.new("Frame")
+ToggleFrame.Size = UDim2.new(1, -24, 0, 40)
+ToggleFrame.Position = UDim2.new(0, 12, 0, 300)
+ToggleFrame.BackgroundColor3 = Color3.fromRGB(22, 22, 22)
+ToggleFrame.BorderSizePixel = 0
+ToggleFrame.ZIndex = 4
+ToggleFrame.Parent = MainFrame
+
+local ToggleFrameCorner = Instance.new("UICorner")
+ToggleFrameCorner.CornerRadius = UDim.new(0, 8)
+ToggleFrameCorner.Parent = ToggleFrame
+
+local ToggleLabel = Instance.new("TextLabel")
+ToggleLabel.Size = UDim2.new(0.6, 0, 1, 0)
+ToggleLabel.Position = UDim2.new(0, 12, 0, 0)
+ToggleLabel.BackgroundTransparency = 1
+ToggleLabel.Text = "Авто-продажа: ВЫКЛ"
+ToggleLabel.TextColor3 = Color3.fromRGB(240, 240, 240)
+ToggleLabel.Font = Enum.Font.GothamMedium
+ToggleLabel.TextSize = 13
+ToggleLabel.TextXAlignment = Enum.TextXAlignment.Left
+ToggleLabel.ZIndex = 5
+ToggleLabel.Parent = ToggleFrame
+
+local ToggleSwitch = Instance.new("TextButton")
+ToggleSwitch.Size = UDim2.new(0, 52, 0, 26)
+ToggleSwitch.Position = UDim2.new(1, -64, 0.5, -13)
+ToggleSwitch.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+ToggleSwitch.BorderSizePixel = 0
+ToggleSwitch.Text = ""
+ToggleSwitch.AutoButtonColor = false
+ToggleSwitch.Active = true
+ToggleSwitch.Selectable = true
+ToggleSwitch.ZIndex = 5
+ToggleSwitch.Parent = ToggleFrame
+
+local ToggleSwitchCorner = Instance.new("UICorner")
+ToggleSwitchCorner.CornerRadius = UDim.new(1, 0)
+ToggleSwitchCorner.Parent = ToggleSwitch
+
+local ToggleKnob = Instance.new("Frame")
+ToggleKnob.Size = UDim2.new(0, 20, 0, 20)
+ToggleKnob.Position = UDim2.new(0, 3, 0.5, -10)
+ToggleKnob.BackgroundColor3 = Color3.fromRGB(220, 220, 220)
+ToggleKnob.BorderSizePixel = 0
+ToggleKnob.ZIndex = 6
+ToggleKnob.Parent = ToggleSwitch
+
+local KnobCorner = Instance.new("UICorner")
+KnobCorner.CornerRadius = UDim.new(1, 0)
+KnobCorner.Parent = ToggleKnob
+
+local StatusLabel = Instance.new("TextLabel")
+StatusLabel.Size = UDim2.new(1, -24, 0, 16)
+StatusLabel.Position = UDim2.new(0, 12, 0, 348)
+StatusLabel.BackgroundTransparency = 1
+StatusLabel.Text = "Ожидание..."
+StatusLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
+StatusLabel.Font = Enum.Font.Gotham
+StatusLabel.TextSize = 11
+StatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+StatusLabel.ZIndex = 4
+StatusLabel.Parent = MainFrame
+
+local function setStatus(text, color)
+    StatusLabel.Text = text
+    StatusLabel.TextColor3 = color or Color3.fromRGB(150, 150, 150)
+end
+
+local function updateToggleVisual()
+    if AutoSellEnabled then
+        TweenService:Create(ToggleSwitch, TweenInfo.new(0.15), {
+            BackgroundColor3 = Color3.fromRGB(180, 20, 20)
+        }):Play()
+        TweenService:Create(ToggleKnob, TweenInfo.new(0.15), {
+            Position = UDim2.new(1, -23, 0.5, -10)
+        }):Play()
+        ToggleLabel.Text = "Авто-продажа: ВКЛ"
+        ToggleLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
+    else
+        TweenService:Create(ToggleSwitch, TweenInfo.new(0.15), {
+            BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+        }):Play()
+        TweenService:Create(ToggleKnob, TweenInfo.new(0.15), {
+            Position = UDim2.new(0, 3, 0.5, -10)
+        }):Play()
+        ToggleLabel.Text = "Авто-продажа: ВЫКЛ"
+        ToggleLabel.TextColor3 = Color3.fromRGB(240, 240, 240)
+    end
+end
+
+local function refreshList()
+    for _, child in ipairs(ListFrame:GetChildren()) do
+        if child:IsA("Frame") then
+            child:Destroy()
+        end
+    end
+
+    for i, itemName in ipairs(ItemsToSell) do
+        local ItemFrame = Instance.new("Frame")
+        ItemFrame.Size = UDim2.new(1, 0, 0, 26)
+        ItemFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+        ItemFrame.BorderSizePixel = 0
+        ItemFrame.LayoutOrder = i
+        ItemFrame.ZIndex = 5
+        ItemFrame.Parent = ListFrame
+
+        local ItemCorner = Instance.new("UICorner")
+        ItemCorner.CornerRadius = UDim.new(0, 6)
+        ItemCorner.Parent = ItemFrame
+
+        local ItemLabel = Instance.new("TextLabel")
+        ItemLabel.Size = UDim2.new(1, -32, 1, 0)
+        ItemLabel.Position = UDim2.new(0, 8, 0, 0)
+        ItemLabel.BackgroundTransparency = 1
+        ItemLabel.Text = itemName
+        ItemLabel.TextColor3 = Color3.fromRGB(230, 230, 230)
+        ItemLabel.Font = Enum.Font.Gotham
+        ItemLabel.TextSize = 12
+        ItemLabel.TextXAlignment = Enum.TextXAlignment.Left
+        ItemLabel.TextTruncate = Enum.TextTruncate.AtEnd
+        ItemLabel.ZIndex = 6
+        ItemLabel.Parent = ItemFrame
+
+        local DeleteBtn = Instance.new("TextButton")
+        DeleteBtn.Size = UDim2.new(0, 22, 0, 22)
+        DeleteBtn.Position = UDim2.new(1, -26, 0.5, -11)
+        DeleteBtn.BackgroundColor3 = Color3.fromRGB(100, 15, 15)
+        DeleteBtn.BorderSizePixel = 0
+        DeleteBtn.Text = "×"
+        DeleteBtn.TextColor3 = Color3.fromRGB(255, 120, 120)
+        DeleteBtn.Font = Enum.Font.GothamBold
+        DeleteBtn.TextSize = 14
+        DeleteBtn.AutoButtonColor = false
+        DeleteBtn.ZIndex = 6
+        DeleteBtn.Parent = ItemFrame
+
+        local DelCorner = Instance.new("UICorner")
+        DelCorner.CornerRadius = UDim.new(0, 6)
+        DelCorner.Parent = DeleteBtn
+
+        DeleteBtn.MouseButton1Click:Connect(function()
+            table.remove(ItemsToSell, i)
+            refreshList()
+        end)
+    end
+end
+
+local function equipTool(tool)
+    local char = LocalPlayer.Character
+    if not char then return false end
+    local humanoid = char:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return false end
+
+    if tool.Parent == char then return true end
+
+    local currentTool = char:FindFirstChildOfClass("Tool")
+    if currentTool then
+        currentTool.Parent = Backpack
+    end
+
+    tool.Parent = char
+    humanoid:EquipTool(tool)
+    return true
+end
+
+local sellThread = nil
+
+local function startAutoSell()
+    if sellThread then return end
+    sellThread = task.spawn(function()
+        while AutoSellEnabled do
+            local char = LocalPlayer.Character
+            local bp = LocalPlayer:FindFirstChild("Backpack")
+            if not char or not bp then
+                task.wait(0.5)
+                continue
+            end
+
+            local humanoid = char:FindFirstChildOfClass("Humanoid")
+            if not humanoid then
+                task.wait(0.5)
+                continue
+            end
+
+            local found = false
+
+            for _, itemName in ipairs(ItemsToSell) do
+                if not AutoSellEnabled then break end
+
+                for _, tool in ipairs(bp:GetChildren()) do
+                    if tool:IsA("Tool") and tool.Name == itemName then
+                        found = true
+                        if equipTool(tool) then
+                            task.wait(0.08)
+                            if SellEvent then
+                                pcall(function()
+                                    SellEvent:FireServer()
+                                end)
+                                setStatus("Продано: " .. itemName, Color3.fromRGB(90, 220, 90))
+                            else
+                                setStatus("Ивент продажи не найден!", Color3.fromRGB(255, 80, 80))
+                            end
+                            task.wait(SellDelay)
+                        end
+                        break
+                    end
+                end
+
+                if not found then
+                    local equipped = char:FindFirstChildOfClass("Tool")
+                    if equipped and equipped.Name == itemName then
+                        found = true
+                        if SellEvent then
+                            pcall(function()
+                                SellEvent:FireServer()
+                            end)
+                            setStatus("Продано: " .. itemName, Color3.fromRGB(90, 220, 90))
+                        end
+                        task.wait(SellDelay)
+                    end
+                end
+            end
+
+            if not found then
+                local equipped = char:FindFirstChildOfClass("Tool")
+                if equipped and not table.find(ItemsToSell, equipped.Name) then
+                    equipped.Parent = bp
+                end
+                setStatus("Ожидание предметов...", Color3.fromRGB(150, 150, 150))
+                task.wait(0.4)
+            end
+        end
+        sellThread = nil
+    end)
+end
+
+local function stopAutoSell()
+    local char = LocalPlayer.Character
+    local bp = LocalPlayer:FindFirstChild("Backpack")
+    if char and bp then
+        local equipped = char:FindFirstChildOfClass("Tool")
+        if equipped then
+            equipped.Parent = bp
+        end
+    end
+    setStatus("Авто-продажа выключена", Color3.fromRGB(180, 180, 180))
+end
+
+AddBtn.MouseButton1Click:Connect(function()
+    local name = InputBox.Text:gsub("^%s+", ""):gsub("%s+$", "")
+    if name == "" then
+        setStatus("Введите название!", Color3.fromRGB(255, 80, 80))
+        return
+    end
+    if table.find(ItemsToSell, name) then
+        setStatus("Уже в списке", Color3.fromRGB(255, 180, 60))
+        return
+    end
+    table.insert(ItemsToSell, name)
+    InputBox.Text = ""
+    refreshList()
+    setStatus("Добавлено: " .. name, Color3.fromRGB(90, 220, 90))
+end)
+
+InputBox.FocusLost:Connect(function(enterPressed)
+    if enterPressed then
+        AddBtn:FireButtonClick()
+    end
+end)
+
+local function onToggleClick()
+    AutoSellEnabled = not AutoSellEnabled
+    updateToggleVisual()
+
+    if AutoSellEnabled then
+        if #ItemsToSell == 0 then
+            setStatus("Список пуст! Добавьте предметы.", Color3.fromRGB(255, 80, 80))
+            AutoSellEnabled = false
+            updateToggleVisual()
+            return
+        end
+        setStatus("Запуск авто-продажи...", Color3.fromRGB(255, 180, 60))
+        startAutoSell()
+    else
+        stopAutoSell()
+    end
+end
+
+ToggleSwitch.MouseButton1Click:Connect(onToggleClick)
+
+ToggleButton.MouseButton1Click:Connect(function()
+    MainFrame.Visible = not MainFrame.Visible
+end)
+
+CloseBtn.MouseButton1Click:Connect(function()
+    MainFrame.Visible = false
+end)
+
+DestroyBtn.MouseButton1Click:Connect(function()
+    AutoSellEnabled = false
+
+    local char = LocalPlayer.Character
+    local bp = LocalPlayer:FindFirstChild("Backpack")
+    if char and bp then
+        local equipped = char:FindFirstChildOfClass("Tool")
+        if equipped then
+            equipped.Parent = bp
+        end
+    end
+
+    if ScreenGui then
+        ScreenGui:Destroy()
+    end
+end)
+
+local dragging = false
+local dragStart, startPos
+
+TitleBar.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+    or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = MainFrame.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
+    or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - dragStart
+        MainFrame.Position = UDim2.new(
+            startPos.X.Scale, startPos.X.Offset + delta.X,
+            startPos.Y.Scale, startPos.Y.Offset + delta.Y
+        )
+    end
+end)
+
+refreshList()
+updateToggleVisual()
+setStatus("Готово. Добавьте предметы.", Color3.fromRGB(150, 150, 150))
+
+LocalPlayer.CharacterAdded:Connect(function(char)
+    Character = char
+end)
+
+print("[Build A Golem Auto Sell] Загружено | by maksimka")
