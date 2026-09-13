@@ -5,22 +5,104 @@ local TweenService = game:GetService("TweenService")
 
 local LocalPlayer = Players.LocalPlayer
 local Backpack = LocalPlayer:WaitForChild("Backpack")
-local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
 
 local SellEvent
 pcall(function()
     SellEvent = ReplicatedStorage.rbxts_include.node_modules["@rbxts"].remo.src.container["requests.sell"]
 end)
 
-local ItemsToSell = {}
+local Materials = {}
 local AutoSellEnabled = false
 local SellDelay = 0.15
+local Mode = "Exact"
 
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "BAG_AutoSell"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui.Parent = game:GetService("CoreGui")
+
+local function buildMaterialsDatabase()
+    local assets = ReplicatedStorage:FindFirstChild("assets")
+    if not assets then
+        warn("[AutoSell] assets не найден!")
+        return
+    end
+    local parts = assets:FindFirstChild("golem-parts")
+    if not parts then
+        warn("[AutoSell] assets.golem-parts не найден!")
+        return
+    end
+
+    for _, folder in ipairs(parts:GetChildren()) do
+        if folder:IsA("Folder") then
+            local materialName = folder.Name:gsub("%-golem$", ""):gsub("^%l", string.upper)
+            local colorSet = {}
+            for _, child in ipairs(folder:GetDescendants()) do
+                if child:IsA("BasePart") and child.Material == Enum.Material.Neon then
+                    local key = string.format("%d,%d,%d",
+                        math.floor(child.Color.R * 255 + 0.5),
+                        math.floor(child.Color.G * 255 + 0.5),
+                        math.floor(child.Color.B * 255 + 0.5))
+                    colorSet[key] = true
+                end
+            end
+            local colorList = {}
+            for k in pairs(colorSet) do table.insert(colorList, k) end
+            table.sort(colorList)
+            Materials[materialName] = {
+                colors = colorList,
+                folder = folder.Name,
+            }
+        end
+    end
+end
+
+buildMaterialsDatabase()
+
+local function getToolColors(tool)
+    local colorSet = {}
+    for _, d in ipairs(tool:GetDescendants()) do
+        if d:IsA("BasePart") and d.Material == Enum.Material.Neon then
+            local key = string.format("%d,%d,%d",
+                math.floor(d.Color.R * 255 + 0.5),
+                math.floor(d.Color.G * 255 + 0.5),
+                math.floor(d.Color.B * 255 + 0.5))
+            colorSet[key] = true
+        end
+    end
+    return colorSet
+end
+
+local function detectMaterial(tool)
+    local toolColors = getToolColors(tool)
+    if next(toolColors) == nil then return nil end
+
+    local bestMatch, bestScore = nil, 0
+    for matName, data in pairs(Materials) do
+        local score = 0
+        for _, col in ipairs(data.colors) do
+            if toolColors[col] then score = score + 1 end
+        end
+        local ratio = score / #data.colors
+        if ratio > bestScore and ratio >= 0.5 then
+            bestScore = ratio
+            bestMatch = matName
+        end
+    end
+    return bestMatch
+end
+
+local function getGolemFullName(tool)
+    if tool.Name ~= "Golem" then return nil end
+    local mat = detectMaterial(tool)
+    if mat then
+        return mat .. " Golem"
+    end
+    return nil
+end
+
+local ItemsToSell = {}
 
 local ToggleButton = Instance.new("TextButton")
 ToggleButton.Name = "ToggleButton"
@@ -49,8 +131,8 @@ ToggleStroke.Parent = ToggleButton
 
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
-MainFrame.Size = UDim2.new(0, 320, 0, 400)
-MainFrame.Position = UDim2.new(0.5, -160, 0.5, -200)
+MainFrame.Size = UDim2.new(0, 340, 0, 460)
+MainFrame.Position = UDim2.new(0.5, -170, 0.5, -230)
 MainFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
 MainFrame.BorderSizePixel = 0
 MainFrame.Active = true
@@ -153,7 +235,7 @@ InputBox.Position = UDim2.new(0, 12, 0, 52)
 InputBox.BackgroundColor3 = Color3.fromRGB(28, 28, 28)
 InputBox.BorderSizePixel = 0
 InputBox.Text = ""
-InputBox.PlaceholderText = "Введите название предмета..."
+InputBox.PlaceholderText = "напр. Diamond Leg, Amethyst Golem..."
 InputBox.PlaceholderColor3 = Color3.fromRGB(120, 120, 120)
 InputBox.TextColor3 = Color3.fromRGB(240, 240, 240)
 InputBox.Font = Enum.Font.Gotham
@@ -172,12 +254,58 @@ InputStroke.Thickness = 1
 InputStroke.Transparency = 0.5
 InputStroke.Parent = InputBox
 
+local ModeFrame = Instance.new("Frame")
+ModeFrame.Size = UDim2.new(1, -24, 0, 34)
+ModeFrame.Position = UDim2.new(0, 12, 0, 92)
+ModeFrame.BackgroundColor3 = Color3.fromRGB(22, 22, 22)
+ModeFrame.BorderSizePixel = 0
+ModeFrame.ZIndex = 4
+ModeFrame.Parent = MainFrame
+
+local ModeCorner = Instance.new("UICorner")
+ModeCorner.CornerRadius = UDim.new(0, 8)
+ModeCorner.Parent = ModeFrame
+
+local ModeExactBtn = Instance.new("TextButton")
+ModeExactBtn.Size = UDim2.new(0.5, -4, 1, -6)
+ModeExactBtn.Position = UDim2.new(0, 3, 0, 3)
+ModeExactBtn.BackgroundColor3 = Color3.fromRGB(140, 20, 20)
+ModeExactBtn.BorderSizePixel = 0
+ModeExactBtn.Text = "По названию"
+ModeExactBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+ModeExactBtn.Font = Enum.Font.GothamBold
+ModeExactBtn.TextSize = 12
+ModeExactBtn.AutoButtonColor = false
+ModeExactBtn.ZIndex = 5
+ModeExactBtn.Parent = ModeFrame
+
+local ModeExactCorner = Instance.new("UICorner")
+ModeExactCorner.CornerRadius = UDim.new(0, 6)
+ModeExactCorner.Parent = ModeExactBtn
+
+local ModePartBtn = Instance.new("TextButton")
+ModePartBtn.Size = UDim2.new(0.5, -4, 1, -6)
+ModePartBtn.Position = UDim2.new(0.5, 1, 0, 3)
+ModePartBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+ModePartBtn.BorderSizePixel = 0
+ModePartBtn.Text = "По материалу"
+ModePartBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+ModePartBtn.Font = Enum.Font.GothamBold
+ModePartBtn.TextSize = 12
+ModePartBtn.AutoButtonColor = false
+ModePartBtn.ZIndex = 5
+ModePartBtn.Parent = ModeFrame
+
+local ModePartCorner = Instance.new("UICorner")
+ModePartCorner.CornerRadius = UDim.new(0, 6)
+ModePartCorner.Parent = ModePartBtn
+
 local AddBtn = Instance.new("TextButton")
 AddBtn.Size = UDim2.new(1, -24, 0, 30)
-AddBtn.Position = UDim2.new(0, 12, 0, 92)
+AddBtn.Position = UDim2.new(0, 12, 0, 132)
 AddBtn.BackgroundColor3 = Color3.fromRGB(140, 20, 20)
 AddBtn.BorderSizePixel = 0
-AddBtn.Text = "+ Добавить предмет"
+AddBtn.Text = "+ Добавить в список"
 AddBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 AddBtn.Font = Enum.Font.GothamBold
 AddBtn.TextSize = 13
@@ -190,8 +318,8 @@ AddCorner.CornerRadius = UDim.new(0, 8)
 AddCorner.Parent = AddBtn
 
 local ListFrame = Instance.new("ScrollingFrame")
-ListFrame.Size = UDim2.new(1, -24, 0, 160)
-ListFrame.Position = UDim2.new(0, 12, 0, 130)
+ListFrame.Size = UDim2.new(1, -24, 0, 170)
+ListFrame.Position = UDim2.new(0, 12, 0, 170)
 ListFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 ListFrame.BorderSizePixel = 0
 ListFrame.ScrollBarThickness = 4
@@ -219,7 +347,7 @@ ListPadding.Parent = ListFrame
 
 local ToggleFrame = Instance.new("Frame")
 ToggleFrame.Size = UDim2.new(1, -24, 0, 40)
-ToggleFrame.Position = UDim2.new(0, 12, 0, 300)
+ToggleFrame.Position = UDim2.new(0, 12, 0, 350)
 ToggleFrame.BackgroundColor3 = Color3.fromRGB(22, 22, 22)
 ToggleFrame.BorderSizePixel = 0
 ToggleFrame.ZIndex = 4
@@ -271,9 +399,9 @@ KnobCorner.Parent = ToggleKnob
 
 local StatusLabel = Instance.new("TextLabel")
 StatusLabel.Size = UDim2.new(1, -24, 0, 16)
-StatusLabel.Position = UDim2.new(0, 12, 0, 348)
+StatusLabel.Position = UDim2.new(0, 12, 0, 400)
 StatusLabel.BackgroundTransparency = 1
-StatusLabel.Text = "Ожидание..."
+StatusLabel.Text = "Готово..."
 StatusLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
 StatusLabel.Font = Enum.Font.Gotham
 StatusLabel.TextSize = 11
@@ -284,6 +412,20 @@ StatusLabel.Parent = MainFrame
 local function setStatus(text, color)
     StatusLabel.Text = text
     StatusLabel.TextColor3 = color or Color3.fromRGB(150, 150, 150)
+end
+
+local function updateModeVisual()
+    if Mode == "Exact" then
+        ModeExactBtn.BackgroundColor3 = Color3.fromRGB(140, 20, 20)
+        ModeExactBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        ModePartBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+        ModePartBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+    else
+        ModeExactBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+        ModeExactBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+        ModePartBtn.BackgroundColor3 = Color3.fromRGB(140, 20, 20)
+        ModePartBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    end
 end
 
 local function updateToggleVisual()
@@ -315,7 +457,7 @@ local function refreshList()
         end
     end
 
-    for i, itemName in ipairs(ItemsToSell) do
+    for i, entry in ipairs(ItemsToSell) do
         local ItemFrame = Instance.new("Frame")
         ItemFrame.Size = UDim2.new(1, 0, 0, 26)
         ItemFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
@@ -329,10 +471,10 @@ local function refreshList()
         ItemCorner.Parent = ItemFrame
 
         local ItemLabel = Instance.new("TextLabel")
-        ItemLabel.Size = UDim2.new(1, -32, 1, 0)
+        ItemLabel.Size = UDim2.new(1, -60, 1, 0)
         ItemLabel.Position = UDim2.new(0, 8, 0, 0)
         ItemLabel.BackgroundTransparency = 1
-        ItemLabel.Text = itemName
+        ItemLabel.Text = entry.value
         ItemLabel.TextColor3 = Color3.fromRGB(230, 230, 230)
         ItemLabel.Font = Enum.Font.Gotham
         ItemLabel.TextSize = 12
@@ -340,6 +482,22 @@ local function refreshList()
         ItemLabel.TextTruncate = Enum.TextTruncate.AtEnd
         ItemLabel.ZIndex = 6
         ItemLabel.Parent = ItemFrame
+
+        local Badge = Instance.new("TextLabel")
+        Badge.Size = UDim2.new(0, 28, 0, 18)
+        Badge.Position = UDim2.new(1, -58, 0.5, -9)
+        Badge.BackgroundColor3 = entry.mode == "Exact" and Color3.fromRGB(60, 20, 20) or Color3.fromRGB(20, 40, 20)
+        Badge.BorderSizePixel = 0
+        Badge.Text = entry.mode == "Exact" and "имя" or "мат"
+        Badge.TextColor3 = Color3.fromRGB(220, 220, 220)
+        Badge.Font = Enum.Font.GothamBold
+        Badge.TextSize = 10
+        Badge.ZIndex = 6
+        Badge.Parent = ItemFrame
+
+        local BadgeCorner = Instance.new("UICorner")
+        BadgeCorner.CornerRadius = UDim.new(0, 4)
+        BadgeCorner.Parent = Badge
 
         local DeleteBtn = Instance.new("TextButton")
         DeleteBtn.Size = UDim2.new(0, 22, 0, 22)
@@ -383,6 +541,29 @@ local function equipTool(tool)
     return true
 end
 
+local function matchesFilter(tool, entry)
+    if entry.mode == "Exact" then
+        if tool.Name == entry.value then return true end
+
+        if tool.Name == "Golem" then
+            local mat = detectMaterial(tool)
+            if mat then
+                local fullName = mat .. " Golem"
+                if string.lower(fullName) == string.lower(entry.value) then
+                    return true
+                end
+            end
+        end
+        return false
+    else
+        local mat = detectMaterial(tool)
+        if mat then
+            return string.lower(mat) == string.lower(entry.value)
+        end
+        return string.find(string.lower(tool.Name), string.lower(entry.value), 1, true) ~= nil
+    end
+end
+
 local sellThread = nil
 
 local function startAutoSell()
@@ -402,51 +583,47 @@ local function startAutoSell()
                 continue
             end
 
-            local found = false
+            local soldThisCycle = false
 
-            for _, itemName in ipairs(ItemsToSell) do
+            local tools = {}
+            for _, t in ipairs(bp:GetChildren()) do
+                if t:IsA("Tool") then table.insert(tools, t) end
+            end
+
+            for _, tool in ipairs(tools) do
                 if not AutoSellEnabled then break end
 
-                for _, tool in ipairs(bp:GetChildren()) do
-                    if tool:IsA("Tool") and tool.Name == itemName then
-                        found = true
-                        if equipTool(tool) then
-                            task.wait(0.08)
-                            if SellEvent then
-                                pcall(function()
-                                    SellEvent:FireServer()
-                                end)
-                                setStatus("Продано: " .. itemName, Color3.fromRGB(90, 220, 90))
-                            else
-                                setStatus("Ивент продажи не найден!", Color3.fromRGB(255, 80, 80))
-                            end
-                            task.wait(SellDelay)
-                        end
+                local shouldSell = false
+
+                for _, entry in ipairs(ItemsToSell) do
+                    if matchesFilter(tool, entry) then
+                        shouldSell = true
                         break
                     end
                 end
 
-                if not found then
-                    local equipped = char:FindFirstChildOfClass("Tool")
-                    if equipped and equipped.Name == itemName then
-                        found = true
+                if shouldSell then
+                    if equipTool(tool) then
+                        task.wait(0.1)
                         if SellEvent then
-                            pcall(function()
-                                SellEvent:FireServer()
-                            end)
-                            setStatus("Продано: " .. itemName, Color3.fromRGB(90, 220, 90))
+                            pcall(function() SellEvent:FireServer() end)
+                            local displayName = getGolemFullName(tool) or tool.Name
+                            setStatus("Продано: " .. displayName, Color3.fromRGB(90, 220, 90))
+                            soldThisCycle = true
+                        else
+                            setStatus("Ивент продажи не найден!", Color3.fromRGB(255, 80, 80))
                         end
                         task.wait(SellDelay)
                     end
                 end
             end
 
-            if not found then
+            if not soldThisCycle then
                 local equipped = char:FindFirstChildOfClass("Tool")
-                if equipped and not table.find(ItemsToSell, equipped.Name) then
+                if equipped then
                     equipped.Parent = bp
                 end
-                setStatus("Ожидание предметов...", Color3.fromRGB(150, 150, 150))
+                setStatus("Ожидание подходящих предметов...", Color3.fromRGB(150, 150, 150))
                 task.wait(0.4)
             end
         end
@@ -463,23 +640,28 @@ local function stopAutoSell()
             equipped.Parent = bp
         end
     end
-    setStatus("Авто-продажа выключена", Color3.fromRGB(180, 180, 180))
+    setStatus("Авто-продажа остановлена", Color3.fromRGB(180, 180, 180))
 end
 
 AddBtn.MouseButton1Click:Connect(function()
-    local name = InputBox.Text:gsub("^%s+", ""):gsub("%s+$", "")
-    if name == "" then
-        setStatus("Введите название!", Color3.fromRGB(255, 80, 80))
+    local value = InputBox.Text:gsub("^%s+", ""):gsub("%s+$", "")
+    if value == "" then
+        setStatus("Введите значение!", Color3.fromRGB(255, 80, 80))
         return
     end
-    if table.find(ItemsToSell, name) then
-        setStatus("Уже в списке", Color3.fromRGB(255, 180, 60))
-        return
+
+    for _, entry in ipairs(ItemsToSell) do
+        if entry.value:lower() == value:lower() and entry.mode == Mode then
+            setStatus("Уже в списке", Color3.fromRGB(255, 180, 60))
+            return
+        end
     end
-    table.insert(ItemsToSell, name)
+
+    table.insert(ItemsToSell, { value = value, mode = Mode })
     InputBox.Text = ""
     refreshList()
-    setStatus("Добавлено: " .. name, Color3.fromRGB(90, 220, 90))
+    setStatus("Добавлено [" .. (Mode == "Exact" and "имя" or "мат") .. "]: " .. value,
+        Color3.fromRGB(90, 220, 90))
 end)
 
 InputBox.FocusLost:Connect(function(enterPressed)
@@ -488,13 +670,24 @@ InputBox.FocusLost:Connect(function(enterPressed)
     end
 end)
 
-local function onToggleClick()
+ModeExactBtn.MouseButton1Click:Connect(function()
+    Mode = "Exact"
+    updateModeVisual()
+    setStatus("Режим: по названию", Color3.fromRGB(200, 200, 200))
+end)
+
+ModePartBtn.MouseButton1Click:Connect(function()
+    Mode = "Material"
+    updateModeVisual()
+    setStatus("Режим: по материалу", Color3.fromRGB(200, 200, 200))
+end)
+
+ToggleSwitch.MouseButton1Click:Connect(function()
     AutoSellEnabled = not AutoSellEnabled
     updateToggleVisual()
-
     if AutoSellEnabled then
         if #ItemsToSell == 0 then
-            setStatus("Список пуст! Добавьте предметы.", Color3.fromRGB(255, 80, 80))
+            setStatus("Список пуст!", Color3.fromRGB(255, 80, 80))
             AutoSellEnabled = false
             updateToggleVisual()
             return
@@ -504,9 +697,7 @@ local function onToggleClick()
     else
         stopAutoSell()
     end
-end
-
-ToggleSwitch.MouseButton1Click:Connect(onToggleClick)
+end)
 
 ToggleButton.MouseButton1Click:Connect(function()
     MainFrame.Visible = not MainFrame.Visible
@@ -518,19 +709,13 @@ end)
 
 DestroyBtn.MouseButton1Click:Connect(function()
     AutoSellEnabled = false
-
     local char = LocalPlayer.Character
     local bp = LocalPlayer:FindFirstChild("Backpack")
     if char and bp then
         local equipped = char:FindFirstChildOfClass("Tool")
-        if equipped then
-            equipped.Parent = bp
-        end
+        if equipped then equipped.Parent = bp end
     end
-
-    if ScreenGui then
-        ScreenGui:Destroy()
-    end
+    if ScreenGui then ScreenGui:Destroy() end
 end)
 
 local dragging = false
@@ -563,10 +748,11 @@ end)
 
 refreshList()
 updateToggleVisual()
-setStatus("Готово. Добавьте предметы.", Color3.fromRGB(150, 150, 150))
-
-LocalPlayer.CharacterAdded:Connect(function(char)
-    Character = char
-end)
+updateModeVisual()
+setStatus("Материалов в базе: " .. tostring((function()
+    local n = 0
+    for _ in pairs(Materials) do n = n + 1 end
+    return n
+end)()), Color3.fromRGB(150, 150, 150))
 
 print("[Build A Golem Auto Sell] Загружено | by maksimka")
