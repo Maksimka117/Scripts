@@ -15,6 +15,7 @@ local Materials = {}
 local AutoSellEnabled = false
 local SellDelay = 0.15
 local Mode = "Exact"
+local LastEquippedByScript = nil
 
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "BAG_AutoSell"
@@ -538,6 +539,7 @@ local function equipTool(tool)
 
     tool.Parent = char
     humanoid:EquipTool(tool)
+    LastEquippedByScript = tool
     return true
 end
 
@@ -618,10 +620,11 @@ local function startAutoSell()
                 end
             end
 
-            if not soldThisCycle then
+                        if not soldThisCycle then
                 local equipped = char:FindFirstChildOfClass("Tool")
-                if equipped then
+                if equipped and equipped == LastEquippedByScript then
                     equipped.Parent = bp
+                    LastEquippedByScript = nil
                 end
                 setStatus("Ожидание подходящих предметов...", Color3.fromRGB(150, 150, 150))
                 task.wait(0.4)
@@ -636,10 +639,11 @@ local function stopAutoSell()
     local bp = LocalPlayer:FindFirstChild("Backpack")
     if char and bp then
         local equipped = char:FindFirstChildOfClass("Tool")
-        if equipped then
+        if equipped and equipped == LastEquippedByScript then
             equipped.Parent = bp
         end
     end
+    LastEquippedByScript = nil
     setStatus("Авто-продажа остановлена", Color3.fromRGB(180, 180, 180))
 end
 
@@ -713,8 +717,11 @@ DestroyBtn.MouseButton1Click:Connect(function()
     local bp = LocalPlayer:FindFirstChild("Backpack")
     if char and bp then
         local equipped = char:FindFirstChildOfClass("Tool")
-        if equipped then equipped.Parent = bp end
+        if equipped and equipped == LastEquippedByScript then
+            equipped.Parent = bp
+        end
     end
+    LastEquippedByScript = nil
     if ScreenGui then ScreenGui:Destroy() end
 end)
 
