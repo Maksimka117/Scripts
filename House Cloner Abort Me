@@ -1,0 +1,1413 @@
+-- ╔══════════════════════════════════════════════════════════╗
+-- ║              HOUSE CLONER — FINAL                          ║
+-- ╚══════════════════════════════════════════════════════════╝
+
+local RS      = game:GetService("ReplicatedStorage")
+local WS      = game:GetService("Workspace")
+local Players = game:GetService("Players")
+local LP      = Players.LocalPlayer
+local HS      = game:GetService("HttpService")
+local TweenService     = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+
+-- ============================================
+-- FDB ИЗ КЕША
+-- ============================================
+local FurnitureDB = _G.FDB_CACHE
+local TexturesDB  = _G.TDB_CACHE
+
+if not FurnitureDB then
+    warn("[Cloner] FDB не загружен — запусти кеш-скрипт в консоли")
+end
+
+-- ============================================
+-- ПАПКА СОХРАНЕНИЙ
+-- ============================================
+local SAVE_FOLDER_NAME = "ArtyomGay2281488"
+local function getSaveFolder()
+    local folder = WS:FindFirstChild(SAVE_FOLDER_NAME)
+    if not folder then
+        folder = Instance.new("Folder")
+        folder.Name = SAVE_FOLDER_NAME
+        folder.Parent = WS
+    end
+    return folder
+end
+
+-- ============================================
+-- ТЕХНИЧЕСКИЕ ЧАСТИ
+-- ============================================
+local TECH_PARTS = {
+    ["Front"]=true,["Back"]=true,["Top"]=true,["Left"]=true,["Right"]=true,["Bottom"]=true,
+    ["PlacementBlock"]=true,["UseBlock"]=true,["Collider"]=true,["Hint"]=true,
+    ["PlayerCounter"]=true,["BudgetCounter"]=true,["Handle"]=true,["Ring"]=true,["Center"]=true,
+}
+
+local byModelName = {}
+if FurnitureDB then
+    for id, e in pairs(FurnitureDB) do
+        if e.model_name then
+            byModelName[e.model_name] = e
+            byModelName[e.model_name:lower()] = e
+        end
+    end
+end
+
+local texIndex = {}
+local function addTex(kind, key, entry)
+    local tid = entry.texture_id or ""
+    local num = tostring(tid):match("(%d+)")
+    if not num then return end
+    local k = kind .. "|" .. num
+    texIndex[k] = texIndex[k] or {}
+    table.insert(texIndex[k], { key = key, color3 = entry.color3, name = entry.name })
+end
+if TexturesDB then
+    for k, e in pairs(TexturesDB.walls  or {}) do if type(e)=="table" then addTex("walls",  k, e) end end
+    for k, e in pairs(TexturesDB.floors or {}) do if type(e)=="table" then addTex("floors", k, e) end end
+end
+
+-- ============================================
+-- ХЕЛПЕРЫ
+-- ============================================
+local function getOrigin()
+    local bp = WS:FindFirstChild("HouseInteriors")
+    bp = bp and bp:FindFirstChild("blueprint")
+    local interior = bp and bp:GetChildren()[1]
+    local sp = interior and interior:FindFirstChild("SpecialParts")
+    return sp and sp:FindFirstChild("FurnitureOrigin")
+end
+
+local function matchTexture(kind, assetid, partColor)
+    local num = tostring(assetid):match("(%d+)")
+    if not num then return nil end
+    local list = texIndex[kind .. "|" .. num]
+    if not list then return nil end
+    if #list == 1 then return list[1].key end
+    if partColor and partColor ~= Color3.new(1,1,1) then
+        local best, bestDist
+        for _, t in ipairs(list) do
+            if t.color3 then
+                local c3 = Color3.new(t.color3[1] or 1, t.color3[2] or 1, t.color3[3] or 1)
+                local d = (c3.R-partColor.R)^2 + (c3.G-partColor.G)^2 + (c3.B-partColor.B)^2
+                if not bestDist or d < bestDist then best, bestDist = t.key, d end
+            end
+        end
+        if best then return best end
+    end
+    return list[1].key
+end
+
+local function safeInvoke(remote, args, timeout)
+    timeout = timeout or 20
+    local done, result = false, nil
+    task.spawn(function()
+        local ok, res = pcall(function() return remote:InvokeServer(unpack(args)) end)
+        result = { ok = ok, res = res }
+        done = true
+    end)
+    local t = tick()
+    while not done and tick() - t < timeout do task.wait(0.05) end
+    if not done then return false, "TIMEOUT" end
+    return result.ok, result.res
+end
+
+local function getAllSlotsInHouse()
+    local slots = {}
+    local fRoot = WS.HouseInteriors and WS.HouseInteriors:FindFirstChild("furniture")
+    if not fRoot then return slots end
+    for _, folder in ipairs(fRoot:GetChildren()) do
+        local slot = folder.Name:match("f%-(%d+)")
+        if slot then table.insert(slots, "f-" .. slot) end
+    end
+    return slots
+end
+
+local function collectColors(innerModel)
+    local colors, seen = {}, {}
+    local colorable = innerModel:FindFirstChild("Colorable", true)
+    if colorable and (colorable:IsA("BasePart") or colorable:IsA("MeshPart")) then
+        table.insert(colors, colorable.Color)
+        seen[string.format("%.3f_%.3f_%.3f", colorable.Color.R, colorable.Color.G, colorable.Color.B)] = true
+    end
+    for _, part in ipairs(innerModel:GetDescendants()) do
+        if (part:IsA("BasePart") or part:IsA("MeshPart"))
+           and not TECH_PARTS[part.Name] and part.Name ~= "Colorable" then
+            local c = part.Color
+            if not (c.R == 1 and c.G == 0 and c.B == 0) then
+                local key = string.format("%.3f_%.3f_%.3f", c.R, c.G, c.B)
+                if not seen[key] then
+                    seen[key] = true
+                    table.insert(colors, c)
+                end
+            end
+        end
+    end
+    if #colors == 0 then table.insert(colors, Color3.new(1, 1, 1)) end
+    return colors
+end
+
+-- ============================================
+-- СЕРИАЛИЗАЦИЯ
+-- ============================================
+local function serializeSnapshot(snap)
+    local data = {
+        items = {}, textures = snap.textures or { walls = {}, floors = {} },
+        totalCost = snap.totalCost or 0, texCount = snap.texCount or 0,
+        timestamp = snap.timestamp or os.time(), name = snap.name or "unnamed",
+    }
+    for _, it in ipairs(snap.items or {}) do
+        local s = {
+            kind = it.kind, name = it.name, model_name = it.model_name,
+            slot = it.slot, cframe_components = it.cframe_components,
+            col_size = it.col_size, colors = {},
+        }
+        for _, c in ipairs(it.colors or {}) do
+            if typeof(c) == "Color3" then table.insert(s.colors, {c.R, c.G, c.B})
+            elseif type(c) == "table" and #c >= 3 then table.insert(s.colors, c) end
+        end
+        table.insert(data.items, s)
+    end
+    return data
+end
+
+local function deserializeSnapshot(data)
+    local snap = {
+        items = {}, textures = data.textures or { walls = {}, floors = {} },
+        totalCost = data.totalCost or 0, texCount = data.texCount or 0,
+        timestamp = data.timestamp or os.time(), name = data.name or "unnamed",
+    }
+    for _, it in ipairs(data.items or {}) do
+        local colors = {}
+        for _, c in ipairs(it.colors or {}) do
+            if type(c) == "table" and #c >= 3 then
+                table.insert(colors, Color3.new(c[1], c[2], c[3]))
+            end
+        end
+        table.insert(snap.items, {
+            kind = it.kind, name = it.name, model_name = it.model_name,
+            slot = it.slot, cframe_components = it.cframe_components,
+            col_size = it.col_size, colors = colors,
+        })
+    end
+    return snap
+end
+
+-- ============================================
+-- СОХРАНЕНИЯ
+-- ============================================
+local function saveSnapshotToWorkspace(name)
+    local snap = _G.houseSnapshot
+    if not snap then return false, "Нет снапшота" end
+    name = tostring(name or ""):gsub("[^%w_%-]", "")
+    if name == "" then return false, "Пустое имя" end
+    local data = serializeSnapshot(snap)
+    data.name = name
+    local json = HS:JSONEncode(data)
+    local folder = getSaveFolder()
+    local existing = folder:FindFirstChild(name)
+    if existing then existing:Destroy() end
+    local sv = Instance.new("StringValue")
+    sv.Name = name
+    sv.Value = json
+    sv.Parent = folder
+    return true, name
+end
+
+local function loadSnapshotFromWorkspace(name)
+    name = tostring(name or ""):gsub("[^%w_%-]", "")
+    if name == "" then return false, "Пустое имя" end
+    local folder = getSaveFolder()
+    local sv = folder:FindFirstChild(name)
+    if not sv or not sv:IsA("StringValue") then return false, "Не найдено" end
+    local ok, data = pcall(function() return HS:JSONDecode(sv.Value) end)
+    if not ok or type(data) ~= "table" then return false, "Повреждённый JSON" end
+    _G.houseSnapshot = deserializeSnapshot(data)
+    return true, _G.houseSnapshot
+end
+
+local function deleteSave(name)
+    name = tostring(name or ""):gsub("[^%w_%-]", "")
+    if name == "" then return false end
+    local folder = getSaveFolder()
+    local sv = folder:FindFirstChild(name)
+    if sv then sv:Destroy() end
+    return true
+end
+
+local function listSaves()
+    local list = {}
+    local folder = getSaveFolder()
+    for _, ch in ipairs(folder:GetChildren()) do
+        if ch:IsA("StringValue") then table.insert(list, ch.Name) end
+    end
+    table.sort(list)
+    return list
+end
+
+-- ============================================
+-- SCAN
+-- ============================================
+local function doScan(report)
+    local origin = getOrigin()
+    if not origin then report("❌ Не найден FurnitureOrigin.", true) return false end
+    report("Сканирую мебель...", false)
+
+    local items = {}
+    local fRoot = WS.HouseInteriors:FindFirstChild("furniture")
+
+    if fRoot then
+        for _, folder in ipairs(fRoot:GetChildren()) do
+            local slot = folder.Name:match("f%-(%d+)")
+            if slot then
+                local innerModel
+                for _, ch in ipairs(folder:GetChildren()) do
+                    if ch:IsA("Model") then innerModel = ch; break end
+                end
+                if innerModel then
+                    local kind = innerModel:GetAttribute("furniture_kind")
+                    if not kind then
+                        local entry = byModelName[innerModel.Name] or byModelName[innerModel.Name:lower()]
+                        kind = entry and entry.id
+                    end
+                    local anchor = innerModel:FindFirstChild("PlacementBlock")
+                        or folder:FindFirstChildWhichIsA("BasePart", true)
+                    if anchor and kind then
+                        local relCF = origin.CFrame:Inverse() * anchor.CFrame
+                        local colors = collectColors(innerModel)
+                        local col = innerModel:FindFirstChild("Colorable", true)
+                        local colSize = col and {col.Size.X, col.Size.Y, col.Size.Z} or nil
+                        table.insert(items, {
+                            kind = kind, name = innerModel.Name, model_name = innerModel.Name,
+                            slot = tonumber(slot), rel_cframe = relCF,
+                            cframe_components = { relCF:GetComponents() },
+                            colors = colors, col_size = colSize,
+                        })
+                    end
+                end
+            end
+        end
+    end
+
+    report(string.format("Мебель: %d. Обои...", #items), false)
+
+    local textures = { walls = {}, floors = {} }
+    do
+        local bp = WS.HouseInteriors:FindFirstChild("blueprint")
+        local interior = bp and bp:GetChildren()[1]
+        if interior then
+            for _, roomGroup in ipairs({"Floors", "Walls"}) do
+                local kind = roomGroup:lower()
+                local g = interior:FindFirstChild(roomGroup)
+                if g then
+                    local roomVotes = {}
+                    for _, part in ipairs(g:GetChildren()) do
+                        if part:IsA("BasePart") then
+                            for _, ch in ipairs(part:GetChildren()) do
+                                if ch:IsA("Texture") then
+                                    local key = matchTexture(kind, ch.Texture, part.Color)
+                                    if key then
+                                        roomVotes[ch.Name] = roomVotes[ch.Name] or {}
+                                        roomVotes[ch.Name][key] = (roomVotes[ch.Name][key] or 0) + 1
+                                    end
+                                end
+                            end
+                        end
+                    end
+                    for roomName, votes in pairs(roomVotes) do
+                        local bestKey, bestCount
+                        for k, cnt in pairs(votes) do
+                            if not bestCount or cnt > bestCount then bestKey, bestCount = k, cnt end
+                        end
+                        if bestKey then
+                            table.insert(textures[kind], { room_name = roomName, key = bestKey })
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    local totalFurniture = 0
+    for _, it in ipairs(items) do
+        local entry = FurnitureDB and FurnitureDB[it.kind]
+        totalFurniture = totalFurniture + (entry and entry.cost or 0)
+    end
+    local texTotal = #textures.walls + #textures.floors
+
+    _G.houseSnapshot = {
+        items = items, textures = textures,
+        totalCost = totalFurniture, texCount = texTotal,
+        timestamp = os.time(), name = "unsaved_" .. os.time(),
+    }
+
+    report(string.format("✅ Скан: мебель %d | обои %d | полы %d",
+        #items, #textures.walls, #textures.floors), false)
+    return true
+end
+
+-- ============================================
+-- PASTE
+-- ============================================
+local function doPaste(report, progressFn, clearFirst)
+    local snap = _G.houseSnapshot
+    if not snap then report("❌ Нет снапшота.", true) return end
+    local myOrigin = getOrigin()
+    if not myOrigin then report("❌ Ты не в своём доме.", true) return end
+
+    local API = RS:FindFirstChild("API")
+    if not API then report("❌ Нет API", true) return end
+
+    local BuyFurnitures  = API:FindFirstChild("HousingAPI/BuyFurnitures")
+    local PushChanges    = API:FindFirstChild("HousingAPI/PushFurnitureChanges")
+    local BuyTexture     = API:FindFirstChild("HousingAPI/BuyTexture")
+    local SellFurniture  = API:FindFirstChild("HousingAPI/SellFurniture")
+
+    if not BuyFurnitures then report("❌ Нет BuyFurnitures", true) return end
+
+    if clearFirst and SellFurniture then
+        local slots = getAllSlotsInHouse()
+        if #slots > 0 then
+            report(string.format("Удаляю %d старых...", #slots), false)
+            for i = 1, #slots, 15 do
+                local batch = {}
+                for j = i, math.min(i + 14, #slots) do table.insert(batch, slots[j]) end
+                pcall(function() SellFurniture:FireServer(true, batch, "sell") end)
+                task.wait(0.3)
+            end
+            task.wait(1)
+        end
+    end
+
+    local items = snap.items or {}
+    local total = #items
+    local spent, failed, skipped = 0, 0, 0
+    local noMoneyStop = false
+    local purchasedMap = {}
+
+    for i = 1, total, 5 do
+        if noMoneyStop then break end
+        local batch, batchMeta, batchCoins = {}, {}, 0
+        for j = i, math.min(i + 4, total) do
+            local it = items[j]
+            local entry = FurnitureDB and FurnitureDB[it.kind]
+            local cost = entry and entry.cost or 0
+            if it.cframe_components then
+                local cf = CFrame.new(unpack(it.cframe_components))
+                table.insert(batch, { kind = it.kind, properties = { cframe = cf } })
+                table.insert(batchMeta, { idx = j, cost = cost })
+                batchCoins = batchCoins + cost
+            else skipped = skipped + 1 end
+        end
+
+        if #batch > 0 then
+            local ok, res = safeInvoke(BuyFurnitures, {batch}, 20)
+            if ok and type(res) == "table" and res.success and type(res.results) == "table" then
+                spent = spent + batchCoins
+                for k, r in ipairs(res.results) do
+                    if r.status == "SUCCESS" and r.unique then
+                        local meta = batchMeta[k]
+                        if meta then purchasedMap[meta.idx] = r.unique end
+                    elseif r.status == "NOT_ENOUGH_MONEY" then noMoneyStop = true end
+                end
+            else
+                failed = failed + #batch
+            end
+        end
+
+        progressFn(math.min(i + 4, total), total,
+            string.format("Мебель %d/%d • %d монет", math.min(i + 4, total), total, spent))
+        task.wait(0.4)
+    end
+
+    local changes = {}
+    local appliedCount = 0
+    local fRootP = WS.HouseInteriors:FindFirstChild("furniture")
+
+    for idx, newSlot in pairs(purchasedMap) do
+        local it = items[idx]
+        if it then
+            local currentSize = nil
+            if fRootP then
+                for _, f in ipairs(fRootP:GetChildren()) do
+                    if f.Name:find(tostring(newSlot), 1, true) then
+                        local innerModel
+                        for _, ch in ipairs(f:GetChildren()) do
+                            if ch:IsA("Model") then innerModel = ch; break end
+                        end
+                        if innerModel then
+                            local col = innerModel:FindFirstChild("Colorable", true)
+                            if col then currentSize = {col.Size.X, col.Size.Y, col.Size.Z} end
+                        end
+                        break
+                    end
+                end
+            end
+
+            local scale = 1
+            if it.col_size and currentSize and currentSize[1] > 0 then
+                local ratio = it.col_size[1] / currentSize[1]
+                if ratio > 0.01 and ratio < 100 then scale = ratio end
+            end
+
+            local colors = {}
+            for _, c in ipairs(it.colors or {}) do
+                if typeof(c) == "Color3" then table.insert(colors, c) end
+            end
+            if #colors == 0 then table.insert(colors, Color3.new(1, 1, 1)) end
+
+            table.insert(changes, {
+                scale = scale, unique = newSlot, colors = colors,
+                cframe = CFrame.new(unpack(it.cframe_components)),
+            })
+            appliedCount = appliedCount + 1
+        end
+    end
+
+    report(string.format("Применяю %d предметов...", appliedCount), false)
+    if PushChanges then
+        for i = 1, #changes, 10 do
+            local cbatch = {}
+            for j = i, math.min(i + 9, #changes) do table.insert(cbatch, changes[j]) end
+            pcall(function() PushChanges:FireServer(cbatch) end)
+            progressFn(i, #changes, string.format("Цвета+размер %d/%d", i, #changes))
+            task.wait(0.4)
+        end
+        pcall(function() PushChanges:FireServer({}) end)
+    end
+    task.wait(0.4)
+
+    local walls = snap.textures.walls or {}
+    local floors = snap.textures.floors or {}
+    local texTotal = #walls + #floors
+    local tc = 0
+    for _, t in ipairs(walls) do
+        tc = tc + 1
+        if BuyTexture then pcall(function() BuyTexture:FireServer(t.room_name, "walls", t.key) end) end
+        spent = spent + 1
+        progressFn(tc, texTotal, string.format("Обои %d/%d", tc, texTotal))
+        task.wait(0.3)
+    end
+    for _, t in ipairs(floors) do
+        tc = tc + 1
+        if BuyTexture then pcall(function() BuyTexture:FireServer(t.room_name, "floors", t.key) end) end
+        spent = spent + 1
+        progressFn(tc, texTotal, string.format("Полы %d/%d", tc, texTotal))
+        task.wait(0.3)
+    end
+
+    if PushChanges then pcall(function() PushChanges:FireServer({}) end) end
+
+    local finalMsg = string.format("✅ Готово! Мебель: %d/%d | Обои+полы: %d | Потрачено ~%d",
+        total - failed - skipped, total, texTotal, spent)
+    if noMoneyStop then finalMsg = finalMsg .. " | ⚠ Не хватило денег" end
+    report(finalMsg, false)
+end
+
+local function doClear(report, progressFn)
+    local API = RS:FindFirstChild("API")
+    local SellFurniture = API and API:FindFirstChild("HousingAPI/SellFurniture")
+    if not SellFurniture then report("❌ Нет SellFurniture", true) return end
+
+    local slots = getAllSlotsInHouse()
+    if #slots == 0 then report("Дом пустой.", false) return end
+
+    report(string.format("Удаляю %d...", #slots), false)
+    local removed = 0
+    for i = 1, #slots, 15 do
+        local batch = {}
+        for j = i, math.min(i + 14, #slots) do table.insert(batch, slots[j]) end
+        if pcall(function() SellFurniture:FireServer(true, batch, "sell") end) then
+            removed = removed + #batch
+        end
+        progressFn(math.min(i + 14, #slots), #slots,
+            string.format("Удалено %d/%d", math.min(i + 14, #slots), #slots))
+        task.wait(0.3)
+    end
+    report(string.format("✅ Удалено: %d/%d", removed, #slots), false)
+end
+
+-- ============================================
+-- UI
+-- ============================================
+local C = {
+    bg        = Color3.fromRGB(22, 22, 24),
+    bgPanel   = Color3.fromRGB(28, 28, 30),
+    bgElem    = Color3.fromRGB(36, 36, 39),
+    bgHover   = Color3.fromRGB(46, 46, 50),
+    accent    = Color3.fromRGB(240, 240, 245),
+    text      = Color3.fromRGB(220, 220, 225),
+    textDim   = Color3.fromRGB(130, 130, 138),
+    stroke    = Color3.fromRGB(48, 48, 52),
+    green     = Color3.fromRGB(80, 200, 120),
+    red       = Color3.fromRGB(220, 80, 80),
+    magenta   = Color3.fromRGB(180, 0, 120),
+}
+
+local old = LP.PlayerGui:FindFirstChild("HouseClonerUI")
+if old then old:Destroy() end
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "HouseClonerUI"
+gui.ResetOnSpawn = false
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+gui.IgnoreGuiInset = true
+gui.Parent = LP:WaitForChild("PlayerGui")
+
+-- Кнопка M (отдельно от окна)
+local openBtn = Instance.new("TextButton")
+openBtn.Size = UDim2.new(0, 45, 0, 45)
+openBtn.Position = UDim2.new(0, 20, 0, 20)
+openBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+openBtn.Text = "M"
+openBtn.TextColor3 = C.magenta
+openBtn.TextSize = 22
+openBtn.Font = Enum.Font.GothamBold
+openBtn.AutoButtonColor = false
+openBtn.BorderSizePixel = 0
+openBtn.Visible = false
+openBtn.Active = true
+openBtn.Parent = gui
+Instance.new("UICorner", openBtn).CornerRadius = UDim.new(0, 10)
+local obs = Instance.new("UIStroke"); obs.Color = C.magenta; obs.Thickness = 1; obs.Parent = openBtn
+
+-- ============================================
+-- ГЛАВНОЕ ОКНО
+-- ============================================
+local main = Instance.new("Frame")
+main.Size = UDim2.new(0, 680, 0, 420)
+main.Position = UDim2.new(0.5, -340, 0.5, -210)
+main.BackgroundColor3 = C.bg
+main.BorderSizePixel = 0
+main.Active = true
+main.Parent = gui
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 12)
+local mStroke = Instance.new("UIStroke"); mStroke.Color = C.stroke; mStroke.Thickness = 1; mStroke.Parent = main
+
+-- Заголовок
+local header = Instance.new("Frame")
+header.Size = UDim2.new(1, 0, 0, 44)
+header.BackgroundColor3 = C.bgPanel
+header.BorderSizePixel = 0
+header.Parent = main
+Instance.new("UICorner", header).CornerRadius = UDim.new(0, 12)
+local hMask = Instance.new("Frame")
+hMask.Size = UDim2.new(1, 0, 0, 14)
+hMask.Position = UDim2.new(0, 0, 1, -14)
+hMask.BackgroundColor3 = C.bgPanel
+hMask.BorderSizePixel = 0
+hMask.Parent = header
+
+local icon = Instance.new("TextLabel")
+icon.Size = UDim2.new(0, 36, 0, 36)
+icon.Position = UDim2.new(0, 8, 0, 4)
+icon.BackgroundTransparency = 1
+icon.Text = "🏠"
+icon.TextSize = 22
+icon.Parent = header
+
+local titleTxt = Instance.new("TextLabel")
+titleTxt.Size = UDim2.new(1, -180, 0, 18)
+titleTxt.Position = UDim2.new(0, 48, 0, 6)
+titleTxt.BackgroundTransparency = 1
+titleTxt.Text = "House Cloner"
+titleTxt.TextColor3 = C.text
+titleTxt.TextSize = 15
+titleTxt.Font = Enum.Font.GothamBold
+titleTxt.TextXAlignment = Enum.TextXAlignment.Left
+titleTxt.Parent = header
+
+local subTxt = Instance.new("TextLabel")
+subTxt.Size = UDim2.new(1, -180, 0, 12)
+subTxt.Position = UDim2.new(0, 48, 0, 24)
+subTxt.BackgroundTransparency = 1
+subTxt.Text = "Adopt Me • интерьер 1-в-1"
+subTxt.TextColor3 = C.textDim
+subTxt.TextSize = 10
+subTxt.Font = Enum.Font.Gotham
+subTxt.TextXAlignment = Enum.TextXAlignment.Left
+subTxt.Parent = header
+
+local function makeHdrBtn(txt, xOff)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(0, 28, 0, 28)
+    b.Position = UDim2.new(1, xOff, 0.5, -14)
+    b.BackgroundColor3 = C.bgElem
+    b.Text = txt
+    b.TextColor3 = C.textDim
+    b.TextSize = 14
+    b.Font = Enum.Font.GothamBold
+    b.AutoButtonColor = false
+    b.BorderSizePixel = 0
+    b.Parent = header
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 7)
+    b.MouseEnter:Connect(function() b.BackgroundColor3 = C.bgHover; b.TextColor3 = C.text end)
+    b.MouseLeave:Connect(function() b.BackgroundColor3 = C.bgElem; b.TextColor3 = C.textDim end)
+    return b
+end
+
+local minBtn   = makeHdrBtn("—", -72)
+local killBtn  = makeHdrBtn("X", -40)
+
+-- Боковое меню
+local sidebar = Instance.new("Frame")
+sidebar.Size = UDim2.new(0, 160, 1, -44)
+sidebar.Position = UDim2.new(0, 0, 0, 44)
+sidebar.BackgroundTransparency = 1
+sidebar.Parent = main
+
+local divider = Instance.new("Frame")
+divider.Size = UDim2.new(0, 1, 1, -20)
+divider.Position = UDim2.new(1, 0, 0, 10)
+divider.BackgroundColor3 = C.stroke
+divider.BorderSizePixel = 0
+divider.Parent = sidebar
+
+local tabs, panels = {}, {}
+local currentTab = 1
+
+local function makeSideBtn(idx, ic, label)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(1, -16, 0, 38)
+    b.Position = UDim2.new(0, 8, 0, 12 + (idx-1) * 44)
+    b.BackgroundColor3 = C.bg
+    b.Text = ""
+    b.AutoButtonColor = false
+    b.BorderSizePixel = 0
+    b.Parent = sidebar
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 7)
+
+    local icLbl = Instance.new("TextLabel")
+    icLbl.Size = UDim2.new(0, 30, 1, 0)
+    icLbl.Position = UDim2.new(0, 4, 0, 0)
+    icLbl.BackgroundTransparency = 1
+    icLbl.Text = ic
+    icLbl.TextSize = 16
+    icLbl.Parent = b
+
+    local lb = Instance.new("TextLabel")
+    lb.Size = UDim2.new(1, -38, 1, 0)
+    lb.Position = UDim2.new(0, 36, 0, 0)
+    lb.BackgroundTransparency = 1
+    lb.Text = label
+    lb.TextColor3 = C.textDim
+    lb.TextSize = 13
+    lb.Font = Enum.Font.Gotham
+    lb.TextXAlignment = Enum.TextXAlignment.Left
+    lb.Parent = b
+
+    local ind = Instance.new("Frame")
+    ind.Size = UDim2.new(0, 3, 0, 0)
+    ind.Position = UDim2.new(0, 0, 0.5, 0)
+    ind.AnchorPoint = Vector2.new(0, 0.5)
+    ind.BackgroundColor3 = C.accent
+    ind.BorderSizePixel = 0
+    ind.Parent = b
+    Instance.new("UICorner", ind).CornerRadius = UDim.new(0, 2)
+
+    b.MouseEnter:Connect(function()
+        if currentTab ~= idx then
+            b.BackgroundColor3 = C.bgPanel
+            lb.TextColor3 = C.text
+        end
+    end)
+    b.MouseLeave:Connect(function()
+        if currentTab ~= idx then
+            b.BackgroundColor3 = C.bg
+            lb.TextColor3 = C.textDim
+        end
+    end)
+
+    return b, ind, lb
+end
+
+local function selectTab(idx)
+    currentTab = idx
+    for i, t in ipairs(tabs) do
+        if i == idx then
+            t.btn.BackgroundColor3 = C.bgPanel
+            t.lb.TextColor3 = C.text
+            TweenService:Create(t.ind, TweenInfo.new(0.2), {Size = UDim2.new(0, 3, 0, 22)}):Play()
+        else
+            t.btn.BackgroundColor3 = C.bg
+            t.lb.TextColor3 = C.textDim
+            TweenService:Create(t.ind, TweenInfo.new(0.2), {Size = UDim2.new(0, 3, 0, 0)}):Play()
+        end
+    end
+    for i, p in ipairs(panels) do p.Visible = (i == idx) end
+end
+
+local tabDefs = {
+    {"🏠", "Сканер"},
+    {"💾", "Сохранения"},
+    {"📜", "Логи"},
+}
+for i, def in ipairs(tabDefs) do
+    local btn, ind, lb = makeSideBtn(i, def[1], def[2])
+    btn.MouseButton1Click:Connect(function() selectTab(i) end)
+    table.insert(tabs, {btn = btn, ind = ind, lb = lb})
+end
+
+-- Контент
+local content = Instance.new("Frame")
+content.Size = UDim2.new(1, -161, 1, -44)
+content.Position = UDim2.new(0, 161, 0, 44)
+content.BackgroundTransparency = 1
+content.Parent = main
+
+-- ============================================
+-- ПАНЕЛЬ 1: СКАНЕР
+-- ============================================
+local scanPanel = Instance.new("Frame")
+scanPanel.Size = UDim2.new(1, 0, 1, 0)
+scanPanel.BackgroundTransparency = 1
+scanPanel.Parent = content
+table.insert(panels, scanPanel)
+
+local secTitle = Instance.new("TextLabel")
+secTitle.Size = UDim2.new(1, -32, 0, 18)
+secTitle.Position = UDim2.new(0, 16, 0, 12)
+secTitle.BackgroundTransparency = 1
+secTitle.Text = "УПРАВЛЕНИЕ"
+secTitle.TextColor3 = C.textDim
+secTitle.TextSize = 10
+secTitle.Font = Enum.Font.GothamBold
+secTitle.TextXAlignment = Enum.TextXAlignment.Left
+secTitle.Parent = scanPanel
+
+local function makeBtn(parent, txt, x, y, w, h)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(0, w, 0, h)
+    b.Position = UDim2.new(0, x, 0, y)
+    b.BackgroundColor3 = C.bgElem
+    b.Text = txt
+    b.TextColor3 = C.text
+    b.TextSize = 13
+    b.Font = Enum.Font.GothamBold
+    b.AutoButtonColor = false
+    b.BorderSizePixel = 0
+    b.Parent = parent
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 8)
+    local st = Instance.new("UIStroke"); st.Color = C.stroke; st.Thickness = 1; st.Parent = b
+    b.MouseEnter:Connect(function()
+        b.BackgroundColor3 = C.bgHover
+        TweenService:Create(st, TweenInfo.new(0.15), {Color = Color3.fromRGB(80,80,85)}):Play()
+    end)
+    b.MouseLeave:Connect(function()
+        b.BackgroundColor3 = C.bgElem
+        TweenService:Create(st, TweenInfo.new(0.15), {Color = C.stroke}):Play()
+    end)
+    return b
+end
+
+local scanBtn  = makeBtn(scanPanel, "📸  Сканировать дом", 16, 38, 240, 44)
+local pasteBtn = makeBtn(scanPanel, "📥  Вставить", 264, 38, 115, 44)
+local clearBtn = makeBtn(scanPanel, "🗑  Очистить дом", 387, 38, 115, 44)
+
+local infoBox = Instance.new("Frame")
+infoBox.Size = UDim2.new(1, -32, 0, 110)
+infoBox.Position = UDim2.new(0, 16, 0, 96)
+infoBox.BackgroundColor3 = C.bgPanel
+infoBox.BorderSizePixel = 0
+infoBox.Parent = scanPanel
+Instance.new("UICorner", infoBox).CornerRadius = UDim.new(0, 8)
+local ibs = Instance.new("UIStroke"); ibs.Color = C.stroke; ibs.Thickness = 1; ibs.Parent = infoBox
+
+local infoTxt = Instance.new("TextLabel")
+infoTxt.Size = UDim2.new(1, -24, 1, -20)
+infoTxt.Position = UDim2.new(0, 12, 0, 10)
+infoTxt.BackgroundTransparency = 1
+infoTxt.Text = "📭  Нет снапшота\n\nЗайди в чужой дом и нажми «Сканировать»"
+infoTxt.TextColor3 = C.text
+infoTxt.TextSize = 12
+infoTxt.Font = Enum.Font.Gotham
+infoTxt.TextXAlignment = Enum.TextXAlignment.Left
+infoTxt.TextYAlignment = Enum.TextYAlignment.Top
+infoTxt.TextWrapped = true
+infoTxt.Parent = infoBox
+
+local progBox = Instance.new("Frame")
+progBox.Size = UDim2.new(1, -32, 0, 66)
+progBox.Position = UDim2.new(0, 16, 0, 216)
+progBox.BackgroundColor3 = C.bgPanel
+progBox.BorderSizePixel = 0
+progBox.Parent = scanPanel
+Instance.new("UICorner", progBox).CornerRadius = UDim.new(0, 8)
+local pbs = Instance.new("UIStroke"); pbs.Color = C.stroke; pbs.Thickness = 1; pbs.Parent = progBox
+
+local progLabel = Instance.new("TextLabel")
+progLabel.Size = UDim2.new(1, -24, 0, 14)
+progLabel.Position = UDim2.new(0, 12, 0, 8)
+progLabel.BackgroundTransparency = 1
+progLabel.Text = "ПРОГРЕСС"
+progLabel.TextColor3 = C.textDim
+progLabel.TextSize = 9
+progLabel.Font = Enum.Font.GothamBold
+progLabel.TextXAlignment = Enum.TextXAlignment.Left
+progLabel.Parent = progBox
+
+local progBG = Instance.new("Frame")
+progBG.Size = UDim2.new(1, -24, 0, 6)
+progBG.Position = UDim2.new(0, 12, 0, 26)
+progBG.BackgroundColor3 = C.bg
+progBG.BorderSizePixel = 0
+progBG.Parent = progBox
+Instance.new("UICorner", progBG).CornerRadius = UDim.new(0, 3)
+
+local progFill = Instance.new("Frame")
+progFill.Size = UDim2.new(0, 0, 1, 0)
+progFill.BackgroundColor3 = C.accent
+progFill.BorderSizePixel = 0
+progFill.Parent = progBG
+Instance.new("UICorner", progFill).CornerRadius = UDim.new(0, 3)
+
+local progTxt = Instance.new("TextLabel")
+progTxt.Size = UDim2.new(1, -24, 0, 26)
+progTxt.Position = UDim2.new(0, 12, 0, 36)
+progTxt.BackgroundTransparency = 1
+progTxt.Text = "Готов."
+progTxt.TextColor3 = C.textDim
+progTxt.TextSize = 11
+progTxt.Font = Enum.Font.Gotham
+progTxt.TextXAlignment = Enum.TextXAlignment.Left
+progTxt.TextYAlignment = Enum.TextYAlignment.Top
+progTxt.Parent = progBox
+
+local statusBar = Instance.new("Frame")
+statusBar.Size = UDim2.new(1, -32, 0, 30)
+statusBar.Position = UDim2.new(0, 16, 1, -42)
+statusBar.BackgroundColor3 = C.bgPanel
+statusBar.BorderSizePixel = 0
+statusBar.Parent = scanPanel
+Instance.new("UICorner", statusBar).CornerRadius = UDim.new(0, 7)
+local sbs = Instance.new("UIStroke"); sbs.Color = C.stroke; sbs.Thickness = 1; sbs.Parent = statusBar
+
+local statusDot = Instance.new("Frame")
+statusDot.Size = UDim2.new(0, 6, 0, 6)
+statusDot.Position = UDim2.new(0, 12, 0.5, -3)
+statusDot.BackgroundColor3 = C.green
+statusDot.BorderSizePixel = 0
+statusDot.Parent = statusBar
+Instance.new("UICorner", statusDot).CornerRadius = UDim.new(1, 0)
+
+local statusTxt = Instance.new("TextLabel")
+statusTxt.Size = UDim2.new(1, -28, 1, 0)
+statusTxt.Position = UDim2.new(0, 26, 0, 0)
+statusTxt.BackgroundTransparency = 1
+statusTxt.Text = "Готов к работе"
+statusTxt.TextColor3 = C.text
+statusTxt.TextSize = 11
+statusTxt.Font = Enum.Font.Gotham
+statusTxt.TextXAlignment = Enum.TextXAlignment.Left
+statusTxt.Parent = statusBar
+
+-- ============================================
+-- ПАНЕЛЬ 2: СОХРАНЕНИЯ
+-- ============================================
+local savePanel = Instance.new("Frame")
+savePanel.Size = UDim2.new(1, 0, 1, 0)
+savePanel.BackgroundTransparency = 1
+savePanel.Visible = false
+savePanel.Parent = content
+table.insert(panels, savePanel)
+
+local saveTitle = Instance.new("TextLabel")
+saveTitle.Size = UDim2.new(1, -32, 0, 18)
+saveTitle.Position = UDim2.new(0, 16, 0, 12)
+saveTitle.BackgroundTransparency = 1
+saveTitle.Text = "СОХРАНЕНИЯ"
+saveTitle.TextColor3 = C.textDim
+saveTitle.TextSize = 10
+saveTitle.Font = Enum.Font.GothamBold
+saveTitle.TextXAlignment = Enum.TextXAlignment.Left
+saveTitle.Parent = savePanel
+
+local listBox = Instance.new("Frame")
+listBox.Size = UDim2.new(0, 260, 1, -68)
+listBox.Position = UDim2.new(0, 16, 0, 38)
+listBox.BackgroundColor3 = C.bgPanel
+listBox.BorderSizePixel = 0
+listBox.Parent = savePanel
+Instance.new("UICorner", listBox).CornerRadius = UDim.new(0, 8)
+local lbs = Instance.new("UIStroke"); lbs.Color = C.stroke; lbs.Thickness = 1; lbs.Parent = listBox
+
+local listFrame = Instance.new("ScrollingFrame")
+listFrame.Size = UDim2.new(1, -16, 1, -16)
+listFrame.Position = UDim2.new(0, 8, 0, 8)
+listFrame.BackgroundTransparency = 1
+listFrame.BorderSizePixel = 0
+listFrame.ScrollBarThickness = 3
+listFrame.ScrollBarImageColor3 = C.bgHover
+listFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+listFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+listFrame.Parent = listBox
+
+local listLayout = Instance.new("UIListLayout")
+listLayout.Padding = UDim.new(0, 4)
+listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+listLayout.Parent = listFrame
+
+local actionBox = Instance.new("Frame")
+actionBox.Size = UDim2.new(1, -292, 1, -68)
+actionBox.Position = UDim2.new(0, 276, 0, 38)
+actionBox.BackgroundColor3 = C.bgPanel
+actionBox.BorderSizePixel = 0
+actionBox.Parent = savePanel
+Instance.new("UICorner", actionBox).CornerRadius = UDim.new(0, 8)
+local abs = Instance.new("UIStroke"); abs.Color = C.stroke; abs.Thickness = 1; abs.Parent = actionBox
+
+local nameLbl = Instance.new("TextLabel")
+nameLbl.Size = UDim2.new(1, -24, 0, 14)
+nameLbl.Position = UDim2.new(0, 12, 0, 12)
+nameLbl.BackgroundTransparency = 1
+nameLbl.Text = "ИМЯ СНАПШОТА"
+nameLbl.TextColor3 = C.textDim
+nameLbl.TextSize = 9
+nameLbl.Font = Enum.Font.GothamBold
+nameLbl.TextXAlignment = Enum.TextXAlignment.Left
+nameLbl.Parent = actionBox
+
+local nameBox = Instance.new("TextBox")
+nameBox.Size = UDim2.new(1, -24, 0, 32)
+nameBox.Position = UDim2.new(0, 12, 0, 30)
+nameBox.BackgroundColor3 = C.bgElem
+nameBox.BorderSizePixel = 0
+nameBox.Text = ""
+nameBox.PlaceholderText = "квартира сына шлюхи"
+nameBox.PlaceholderColor3 = C.textDim
+nameBox.TextColor3 = C.text
+nameBox.TextSize = 12
+nameBox.Font = Enum.Font.Gotham
+nameBox.ClearTextOnFocus = false
+nameBox.Parent = actionBox
+Instance.new("UICorner", nameBox).CornerRadius = UDim.new(0, 7)
+local nbs = Instance.new("UIStroke"); nbs.Color = C.stroke; nbs.Thickness = 1; nbs.Parent = nameBox
+
+local function makeRowBtn(parent, txt, y, isRed)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(1, -24, 0, 32)
+    b.Position = UDim2.new(0, 12, 0, y)
+    b.BackgroundColor3 = C.bgElem
+    b.Text = "   " .. txt
+    b.TextColor3 = isRed and C.red or C.text
+    b.TextSize = 12
+    b.Font = Enum.Font.Gotham
+    b.AutoButtonColor = false
+    b.BorderSizePixel = 0
+    b.TextXAlignment = Enum.TextXAlignment.Left
+    b.Parent = parent
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 7)
+    local st = Instance.new("UIStroke"); st.Color = C.stroke; st.Thickness = 1; st.Parent = b
+    b.MouseEnter:Connect(function()
+        b.BackgroundColor3 = C.bgHover
+        st.Color = Color3.fromRGB(80,80,85)
+    end)
+    b.MouseLeave:Connect(function()
+        b.BackgroundColor3 = C.bgElem
+        st.Color = C.stroke
+    end)
+    return b
+end
+
+local saveBtn   = makeRowBtn(actionBox, "💾  Сохранить из скана",  74, false)
+local loadBtn   = makeRowBtn(actionBox, "📂  Загрузить в снапшот", 110, false)
+local deleteBtn = makeRowBtn(actionBox, "❌  Удалить сохранение",  146, true)
+
+-- ============================================
+-- ПАНЕЛЬ 3: ЛОГИ
+-- ============================================
+local logPanel = Instance.new("Frame")
+logPanel.Size = UDim2.new(1, 0, 1, 0)
+logPanel.BackgroundTransparency = 1
+logPanel.Visible = false
+logPanel.Parent = content
+table.insert(panels, logPanel)
+
+local logBox = Instance.new("Frame")
+logBox.Size = UDim2.new(1, -32, 1, -32)
+logBox.Position = UDim2.new(0, 16, 0, 16)
+logBox.BackgroundColor3 = Color3.fromRGB(16, 16, 18)
+logBox.BorderSizePixel = 0
+logBox.Parent = logPanel
+Instance.new("UICorner", logBox).CornerRadius = UDim.new(0, 8)
+local lgbs = Instance.new("UIStroke"); lgbs.Color = C.stroke; lgbs.Thickness = 1; lgbs.Parent = logBox
+
+local logScroll = Instance.new("ScrollingFrame")
+logScroll.Size = UDim2.new(1, -16, 1, -16)
+logScroll.Position = UDim2.new(0, 8, 0, 8)
+logScroll.BackgroundTransparency = 1
+logScroll.BorderSizePixel = 0
+logScroll.ScrollBarThickness = 3
+logScroll.ScrollBarImageColor3 = C.bgHover
+logScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+logScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+logScroll.Parent = logBox
+
+local logLayout = Instance.new("UIListLayout")
+logLayout.Padding = UDim.new(0, 2)
+logLayout.SortOrder = Enum.SortOrder.LayoutOrder
+logLayout.Parent = logScroll
+
+-- ============================================
+-- ФУНКЦИИ UI
+-- ============================================
+local logLines = {}
+local MAX_LOG = 80
+
+local function addLog(msg, isError)
+    local row = Instance.new("Frame")
+    row.Size = UDim2.new(1, -8, 0, 16)
+    row.BackgroundTransparency = 1
+    row.Parent = logScroll
+
+    local t = Instance.new("TextLabel")
+    t.Size = UDim2.new(0, 60, 1, 0)
+    t.BackgroundTransparency = 1
+    t.Text = os.date("%H:%M:%S")
+    t.TextColor3 = Color3.fromRGB(80, 80, 88)
+    t.TextSize = 10
+    t.Font = Enum.Font.Code
+    t.TextXAlignment = Enum.TextXAlignment.Left
+    t.Parent = row
+
+    local m = Instance.new("TextLabel")
+    m.Size = UDim2.new(1, -60, 1, 0)
+    m.Position = UDim2.new(0, 60, 0, 0)
+    m.BackgroundTransparency = 1
+    m.Text = msg
+    m.TextColor3 = isError and Color3.fromRGB(255, 120, 120) or C.text
+    m.TextSize = 10
+    m.Font = Enum.Font.Code
+    m.TextXAlignment = Enum.TextXAlignment.Left
+    m.Parent = row
+
+    table.insert(logLines, row)
+    if #logLines > MAX_LOG then
+        local oldRow = table.remove(logLines, 1)
+        if oldRow then oldRow:Destroy() end
+    end
+    task.defer(function()
+        logScroll.CanvasPosition = Vector2.new(0, math.max(0, logLayout.AbsoluteContentSize.Y))
+    end)
+end
+
+local function setStatus(msg, isError)
+    statusTxt.Text = msg
+    statusDot.BackgroundColor3 = isError and C.red or C.green
+    addLog(msg, isError)
+end
+
+local function setProgress(c, m, label)
+    if m <= 0 then
+        progFill.Size = UDim2.new(0, 0, 1, 0)
+        progTxt.Text = "—"
+        return
+    end
+    progFill:TweenSize(UDim2.new(math.clamp(c/m, 0, 1), 0, 1, 0), "Out", "Quad", 0.15, true)
+    if label then progTxt.Text = label end
+end
+
+local function refreshInfo()
+    local snap = _G.houseSnapshot
+    if not snap then
+        infoTxt.Text = "📭  Нет снапшота\n\nЗайди в чужой дом и нажми «Сканировать»"
+        return
+    end
+    local totalTex = (snap.texCount or 0)
+    local furnCost = snap.totalCost or 0
+    local texCost = totalTex * 2
+    local totalPrice = furnCost + texCost
+
+    infoTxt.Text = string.format(
+        "📦  Снапшот: %s\n" ..
+        "🪑  Мебель: %d шт   |   🎨  Обои: %d + Полы: %d\n" ..
+        "💰  Нужно: %d монет\n" ..
+        "🕒  Снят: %s",
+        snap.name or "?",
+        #(snap.items or {}),
+        #((snap.textures or {}).walls or {}),
+        #((snap.textures or {}).floors or {}),
+        totalPrice,
+        os.date("%H:%M:%S", snap.timestamp or 0)
+    )
+end
+
+local function refreshSaveList()
+    for _, ch in ipairs(listFrame:GetChildren()) do
+        if ch:IsA("TextButton") or ch:IsA("TextLabel") then ch:Destroy() end
+    end
+
+    local saves = listSaves()
+    if #saves == 0 then
+        local e = Instance.new("TextLabel")
+        e.Size = UDim2.new(1, -8, 0, 20)
+        e.BackgroundTransparency = 1
+        e.Text = "(пусто)"
+        e.TextColor3 = C.textDim
+        e.TextSize = 11
+        e.Font = Enum.Font.Gotham
+        e.Parent = listFrame
+        return
+    end
+
+    for i, name in ipairs(saves) do
+        local row = Instance.new("TextButton")
+        row.Size = UDim2.new(1, -6, 0, 30)
+        row.BackgroundColor3 = C.bgElem
+        row.BorderSizePixel = 0
+        row.Text = "   " .. name
+        row.TextColor3 = C.text
+        row.TextSize = 11
+        row.Font = Enum.Font.Gotham
+        row.TextXAlignment = Enum.TextXAlignment.Left
+        row.AutoButtonColor = false
+        row.Parent = listFrame
+        Instance.new("UICorner", row).CornerRadius = UDim.new(0, 6)
+
+        row.MouseButton1Click:Connect(function()
+            nameBox.Text = name
+            setStatus("Выбрано: " .. name, false)
+        end)
+        row.MouseEnter:Connect(function() row.BackgroundColor3 = C.bgHover end)
+        row.MouseLeave:Connect(function() row.BackgroundColor3 = C.bgElem end)
+    end
+end
+
+-- ============================================
+-- ОБРАБОТЧИКИ КНОПОК ФУНКЦИЙ
+-- ============================================
+local scanning, pasting, clearing = false, false, false
+
+scanBtn.MouseButton1Click:Connect(function()
+    if scanning or pasting or clearing then return end
+    scanning = true
+    scanBtn.Text = "⏳  Сканирую..."
+    setProgress(0, 1, "Сканирую...")
+    setStatus("Сканирую дом...", false)
+    task.spawn(function()
+        local ok = doScan(function(msg, isErr) setStatus(msg, isErr) end)
+        scanning = false
+        scanBtn.Text = "📸  Сканировать дом"
+        setProgress(1, 1, "Готово")
+        if ok then refreshInfo() end
+    end)
+end)
+
+pasteBtn.MouseButton1Click:Connect(function()
+    if scanning or pasting or clearing then return end
+    if not _G.houseSnapshot then setStatus("❌ Нет снапшота.", true) return end
+    pasting = true
+    pasteBtn.Text = "⏳  Вставляю..."
+    setProgress(0, 1, "Вставляю...")
+    setStatus("Начинаю вставку...", false)
+    task.spawn(function()
+        doPaste(
+            function(msg, isErr) setStatus(msg, isErr) end,
+            function(c, m, label) setProgress(c, m, label) end,
+            true
+        )
+        pasting = false
+        pasteBtn.Text = "📥  Вставить"
+    end)
+end)
+
+clearBtn.MouseButton1Click:Connect(function()
+    if scanning or pasting or clearing then return end
+    clearing = true
+    clearBtn.Text = "⏳  Удаляю..."
+    setProgress(0, 1, "Удаляю...")
+    task.spawn(function()
+        doClear(
+            function(msg, isErr) setStatus(msg, isErr) end,
+            function(c, m, label) setProgress(c, m, label) end
+        )
+        clearing = false
+        clearBtn.Text = "🗑  Очистить дом"
+    end)
+end)
+
+saveBtn.MouseButton1Click:Connect(function()
+    if not _G.houseSnapshot then setStatus("❌ Нет снапшота.", true) return end
+    local name = nameBox.Text
+    if name == "" then setStatus("❌ Введи имя.", true) return end
+    local ok, result = saveSnapshotToWorkspace(name)
+    if ok then
+        _G.houseSnapshot.name = result
+        setStatus("✅ Сохранено: " .. result, false)
+        refreshInfo()
+        refreshSaveList()
+    else
+        setStatus("❌ " .. tostring(result), true)
+    end
+end)
+
+loadBtn.MouseButton1Click:Connect(function()
+    local name = nameBox.Text
+    if name == "" then setStatus("❌ Введи имя.", true) return end
+    local ok, result = loadSnapshotFromWorkspace(name)
+    if ok then
+        setStatus("✅ Загружено: " .. name, false)
+        refreshInfo()
+    else
+        setStatus("❌ " .. tostring(result), true)
+    end
+end)
+
+deleteBtn.MouseButton1Click:Connect(function()
+    local name = nameBox.Text
+    if name == "" then setStatus("❌ Введи имя.", true) return end
+    deleteSave(name)
+    setStatus("🗑 Удалено: " .. name, false)
+    refreshSaveList()
+end)
+
+-- ============================================
+-- ЛОГИКА СВОРАЧИВАНИЯ / КЛИКА M / ЗАКРЫТИЯ
+-- ============================================
+
+-- Свернуть окно в кнопку M
+local function minimizeToM()
+    openBtn.Position = UDim2.new(
+        main.Position.X.Scale, main.Position.X.Offset,
+        main.Position.Y.Scale, main.Position.Y.Offset
+    )
+    main.Visible = false
+    openBtn.Visible = true
+end
+
+-- Развернуть окно из кнопки M
+local function expandFromM()
+    main.Position = UDim2.new(
+        openBtn.Position.X.Scale, openBtn.Position.X.Offset,
+        openBtn.Position.Y.Scale, openBtn.Position.Y.Offset
+    )
+    main.Visible = true
+    openBtn.Visible = false
+end
+
+-- ============================================
+-- СВОРАЧИВАНИЕ / РАЗВОРАЧИВАНИЕ / УБИЙСТВО
+-- ============================================
+
+-- Свернуть окно
+local function minimizeWindow()
+    main.Visible = false
+    openBtn.Visible = true
+end
+
+-- Развернуть окно (M НЕ перемещается — он остаётся где стоит)
+local function expandWindow()
+    main.Visible = true
+    openBtn.Visible = false
+end
+
+-- Кнопка "—" — свернуть
+minBtn.MouseButton1Click:Connect(function()
+    minimizeWindow()
+end)
+
+-- Кнопка "✕" — убить скрипт
+killBtn.MouseButton1Click:Connect(function()
+    gui:Destroy()
+end)
+
+-- ============================================
+-- КНОПКА M — перетаскивание + клик
+-- ============================================
+local draggingM = false
+local dragStartInput = nil
+local startPosM = nil
+
+openBtn.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+    or input.UserInputType == Enum.UserInputType.Touch then
+        draggingM = true
+        dragStartInput = input.Position
+        startPosM = openBtn.Position
+    end
+end)
+
+openBtn.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement
+    or input.UserInputType == Enum.UserInputType.Touch then
+        if draggingM then
+            local delta = input.Position - dragStartInput
+            openBtn.Position = UDim2.new(
+                startPosM.X.Scale, startPosM.X.Offset + delta.X,
+                startPosM.Y.Scale, startPosM.Y.Offset + delta.Y
+            )
+        end
+    end
+end)
+
+openBtn.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+    or input.UserInputType == Enum.UserInputType.Touch then
+        if draggingM then
+            draggingM = false
+            -- Разница между НАЧАЛЬНОЙ и КОНЕЧНОЙ позицией кнопки
+            local deltaX = math.abs(openBtn.Position.X.Offset - startPosM.X.Offset)
+            local deltaY = math.abs(openBtn.Position.Y.Offset - startPosM.Y.Offset)
+            -- Если сдвинули меньше 5 пикселей — считаем кликом
+            if deltaX < 5 and deltaY < 5 then
+                main.Visible = true
+                openBtn.Visible = false
+            end
+        end
+    end
+end)
+
+-- ============================================
+-- ПЕРЕТАСКИВАНИЕ ОСНОВНОГО ОКНА
+-- ============================================
+local dragging, dragInput, dragStart, startPos
+header.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+    or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = main.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+header.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement
+    or input.UserInputType == Enum.UserInputType.Touch then
+        dragInput = input
+    end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if input == dragInput and dragging then
+        local delta = input.Position - dragStart
+        main.Position = UDim2.new(
+            startPos.X.Scale, startPos.X.Offset + delta.X,
+            startPos.Y.Scale, startPos.Y.Offset + delta.Y
+        )
+    end
+end)
+
+-- ============================================
+-- ИНИЦИАЛИЗАЦИЯ
+-- ============================================
+selectTab(1)
+getSaveFolder()
+refreshInfo()
+refreshSaveList()
+setStatus("Готов к работе", false)
+addLog("House Cloner загружен", false)
+if FurnitureDB then
+    addLog("FurnitureDB: OK", false)
+else
+    addLog("FurnitureDB: НЕТ (запусти кеш-скрипт)", true)
+end
+if TexturesDB then
+    addLog("TexturesDB: OK", false)
+else
+    addLog("TexturesDB: НЕТ", true)
+end
+
+print("[House Cloner] Загружен")
