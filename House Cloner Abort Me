@@ -11,9 +11,6 @@ local TweenService     = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 
 -- ============================================
--- FDB ИЗ КЕША
--- ============================================
--- ============================================
 -- FDB АВТОЗАГРУЗКА
 -- ============================================
 local FurnitureDB = _G.FDB_CACHE
@@ -1491,3 +1488,4 @@ else
 end
 
 print("[House Cloner] Загружен")
+
