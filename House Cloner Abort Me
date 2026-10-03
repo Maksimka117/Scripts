@@ -21,17 +21,23 @@ if not FurnitureDB then
 end
 
 -- ============================================
--- ПАПКА СОХРАНЕНИЙ
+-- ПАПКА ФАЙЛОВ В ИНЖЕКТОРЕ
 -- ============================================
-local SAVE_FOLDER_NAME = "ArtyomGay2281488"
-local function getSaveFolder()
-    local folder = WS:FindFirstChild(SAVE_FOLDER_NAME)
-    if not folder then
-        folder = Instance.new("Folder")
-        folder.Name = SAVE_FOLDER_NAME
-        folder.Parent = WS
+local FILE_FOLDER = "House-Cloner"
+
+local function ensureFileFolder()
+    if makefolder and isfolder then
+        local ok, exists = pcall(function() return isfolder(FILE_FOLDER) end)
+        if ok and not exists then
+            pcall(function() makefolder(FILE_FOLDER) end)
+        end
     end
-    return folder
+end
+
+ensureFileFolder()
+
+local function getFilePath(name)
+    return FILE_FOLDER .. "/" .. name .. ".json"
 end
 
 -- ============================================
@@ -196,32 +202,39 @@ end
 -- ============================================
 -- СОХРАНЕНИЯ
 -- ============================================
-local function saveSnapshotToWorkspace(name)
+local function saveSnapshotToFile(name)
     local snap = _G.houseSnapshot
     if not snap then return false, "Нет снапшота" end
+    if not writefile then return false, "writefile недоступен" end
+
     name = tostring(name or ""):gsub("[^%w_%-]", "")
     if name == "" then return false, "Пустое имя" end
+
+    ensureFileFolder()
+
     local data = serializeSnapshot(snap)
     data.name = name
     local json = HS:JSONEncode(data)
-    local folder = getSaveFolder()
-    local existing = folder:FindFirstChild(name)
-    if existing then existing:Destroy() end
-    local sv = Instance.new("StringValue")
-    sv.Name = name
-    sv.Value = json
-    sv.Parent = folder
-    return true, name
+
+    local path = getFilePath(name)
+    local ok, err = pcall(function() writefile(path, json) end)
+    if not ok then return false, "Ошибка: " .. tostring(err) end
+    return true, path
 end
 
-local function loadSnapshotFromWorkspace(name)
+local function loadSnapshotFromFile(name)
+    if not readfile then return false, "readfile недоступен" end
+
     name = tostring(name or ""):gsub("[^%w_%-]", "")
     if name == "" then return false, "Пустое имя" end
-    local folder = getSaveFolder()
-    local sv = folder:FindFirstChild(name)
-    if not sv or not sv:IsA("StringValue") then return false, "Не найдено" end
-    local ok, data = pcall(function() return HS:JSONDecode(sv.Value) end)
-    if not ok or type(data) ~= "table" then return false, "Повреждённый JSON" end
+
+    local path = getFilePath(name)
+    local ok, content = pcall(function() return readfile(path) end)
+    if not ok or not content then return false, "Файл не найден: " .. path end
+
+    local ok2, data = pcall(function() return HS:JSONDecode(content) end)
+    if not ok2 or type(data) ~= "table" then return false, "Повреждённый JSON" end
+
     _G.houseSnapshot = deserializeSnapshot(data)
     return true, _G.houseSnapshot
 end
@@ -229,18 +242,26 @@ end
 local function deleteSave(name)
     name = tostring(name or ""):gsub("[^%w_%-]", "")
     if name == "" then return false end
-    local folder = getSaveFolder()
-    local sv = folder:FindFirstChild(name)
-    if sv then sv:Destroy() end
+    if delfile then
+        pcall(function() delfile(getFilePath(name)) end)
+    end
     return true
 end
 
 local function listSaves()
     local list = {}
-    local folder = getSaveFolder()
-    for _, ch in ipairs(folder:GetChildren()) do
-        if ch:IsA("StringValue") then table.insert(list, ch.Name) end
+
+    -- Из папки инжектора
+    if listfiles then
+        local ok, files = pcall(function() return listfiles(FILE_FOLDER) end)
+        if ok and files then
+            for _, f in ipairs(files) do
+                local base = f:match("([^/\\]+)%.json$")
+                if base then table.insert(list, base) end
+            end
+        end
     end
+
     table.sort(list)
     return list
 end
@@ -1009,9 +1030,9 @@ local function makeRowBtn(parent, txt, y, isRed)
     return b
 end
 
-local saveBtn   = makeRowBtn(actionBox, "💾  Сохранить из скана",  74, false)
-local loadBtn   = makeRowBtn(actionBox, "📂  Загрузить в снапшот", 110, false)
-local deleteBtn = makeRowBtn(actionBox, "❌  Удалить сохранение",  146, true)
+local saveBtn   = makeRowBtn(actionBox, "💾  Сохранить дом",   74, false)
+local loadBtn   = makeRowBtn(actionBox, "📂  Загрузить дом",   110, false)
+local deleteBtn = makeRowBtn(actionBox, "❌  Удалить сохранение", 146, true)
 
 -- ============================================
 -- ПАНЕЛЬ 3: ЛОГИ
@@ -1227,32 +1248,66 @@ clearBtn.MouseButton1Click:Connect(function()
 end)
 
 saveBtn.MouseButton1Click:Connect(function()
-    if not _G.houseSnapshot then setStatus("❌ Нет снапшота.", true) return end
+    if scanning or pasting or clearing then return end
     local name = nameBox.Text
     if name == "" then setStatus("❌ Введи имя.", true) return end
-    local ok, result = saveSnapshotToWorkspace(name)
-    if ok then
-        _G.houseSnapshot.name = result
-        setStatus("✅ Сохранено: " .. result, false)
-        refreshInfo()
-        refreshSaveList()
-    else
-        setStatus("❌ " .. tostring(result), true)
-    end
+
+    scanning = true
+    saveBtn.Text = "   ⏳  Сканирую..."
+    setProgress(0, 1, "Сканирую для сохранения...")
+    setStatus("Сканирую дом для сохранения...", false)
+
+    task.spawn(function()
+        -- Сканируем чужой дом
+        local ok = doScan(function(msg, isErr) setStatus(msg, isErr) end)
+        if ok then
+            -- Сохраняем в файл
+            local ok2, result = saveSnapshotToFile(name)
+            if ok2 then
+                _G.houseSnapshot.name = name
+                setStatus("✅ Сохранено: " .. name, false)
+                refreshInfo()
+                refreshSaveList()
+            else
+                setStatus("❌ " .. tostring(result), true)
+            end
+        end
+        scanning = false
+        saveBtn.Text = "   💾  Сохранить дом"
+    end)
 end)
 
 loadBtn.MouseButton1Click:Connect(function()
+    if scanning or pasting or clearing then return end
     local name = nameBox.Text
     if name == "" then setStatus("❌ Введи имя.", true) return end
-    local ok, result = loadSnapshotFromWorkspace(name)
-    if ok then
-        setStatus("✅ Загружено: " .. name, false)
-        refreshInfo()
-    else
-        setStatus("❌ " .. tostring(result), true)
-    end
-end)
 
+    -- Читаем файл
+    local ok, result = loadSnapshotFromFile(name)
+    if not ok then
+        setStatus("❌ " .. tostring(result), true)
+        return
+    end
+
+    setStatus("✅ Загружено: " .. name, false)
+    refreshInfo()
+
+    -- Сразу вставляем
+    pasting = true
+    loadBtn.Text = "   ⏳  Вставляю..."
+    setProgress(0, 1, "Вставляю из файла...")
+    setStatus("Вставляю дом из файла...", false)
+
+    task.spawn(function()
+        doPaste(
+            function(msg, isErr) setStatus(msg, isErr) end,
+            function(c, m, label) setProgress(c, m, label) end,
+            true
+        )
+        pasting = false
+        loadBtn.Text = "   📂  Загрузить дом"
+    end)
+end)
 deleteBtn.MouseButton1Click:Connect(function()
     local name = nameBox.Text
     if name == "" then setStatus("❌ Введи имя.", true) return end
@@ -1394,7 +1449,7 @@ end)
 -- ИНИЦИАЛИЗАЦИЯ
 -- ============================================
 selectTab(1)
-getSaveFolder()
+ensureFileFolder()
 refreshInfo()
 refreshSaveList()
 setStatus("Готов к работе", false)
