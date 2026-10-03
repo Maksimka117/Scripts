@@ -13,11 +13,36 @@ local UserInputService = game:GetService("UserInputService")
 -- ============================================
 -- FDB ИЗ КЕША
 -- ============================================
+-- ============================================
+-- FDB АВТОЗАГРУЗКА
+-- ============================================
 local FurnitureDB = _G.FDB_CACHE
 local TexturesDB  = _G.TDB_CACHE
 
 if not FurnitureDB then
-    warn("[Cloner] FDB не загружен — запусти кеш-скрипт в консоли")
+    local ok1, res1 = pcall(function()
+        return require(RS.ClientDB.Housing.FurnitureDB)
+    end)
+    if ok1 and res1 then
+        FurnitureDB = res1
+        _G.FDB_CACHE = res1
+        print("[Cloner] FurnitureDB загружен")
+    else
+        warn("[Cloner] FurnitureDB не загружен: " .. tostring(res1))
+    end
+end
+
+if not TexturesDB then
+    local ok2, res2 = pcall(function()
+        return require(RS.ClientDB.Housing.TexturesDB)
+    end)
+    if ok2 and res2 then
+        TexturesDB = res2
+        _G.TDB_CACHE = res2
+        print("[Cloner] TexturesDB загружен")
+    else
+        warn("[Cloner] TexturesDB не загружен: " .. tostring(res2))
+    end
 end
 
 -- ============================================
