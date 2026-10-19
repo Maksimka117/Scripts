@@ -1,5 +1,5 @@
 -- ╔══════════════════════════════════════════════════════════╗
--- ║            EVENT DROP FARMER — Magenta Edition             ║
+-- ║            EVENT FARMER — Magenta Edition                  ║
 -- ╚══════════════════════════════════════════════════════════╝
 local RS       = game:GetService("ReplicatedStorage")
 local WS       = game:GetService("Workspace")
@@ -16,27 +16,58 @@ local C = {
     stroke = Color3.fromRGB(60, 30, 70), red = Color3.fromRGB(230, 70, 90),
 }
 
-local STATE = { running = true, farm = false }
+local STATE = { running = true, farm = false, farmThr = nil }
 
 -- ==========================================
 -- МЕХАНИКА ФАРМА
 -- ==========================================
 local function farmStep()
-    local dropEvent = WS:FindFirstChild("DropEvent")
     local char = LP.Character
-    if not dropEvent or not char then return end
-    
+    if not char then return end
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
 
-    -- Ищем все модели с "Drop" в названии
-    for _, obj in ipairs(dropEvent:GetChildren()) do
-        if obj:IsA("Model") and string.find(string.lower(obj.Name), "drop") then
-            -- Телепортируем прямо в позицию игрока (на уровне пола)
-            local targetCF = hrp.CFrame
-            pcall(function()
-                obj:PivotTo(targetCF)
-            end)
+    -- Собираем список всех доступных целей
+    local targets = {}
+    
+    local dropEvent = WS:FindFirstChild("DropEvent")
+    if dropEvent then
+        for _, obj in ipairs(dropEvent:GetChildren()) do
+            if obj:IsA("Model") and string.find(string.lower(obj.Name), "drop") then
+                table.insert(targets, obj)
+            end
+        end
+    end
+
+    local pumpkinRain = WS:FindFirstChild("PumpkinRain")
+    if pumpkinRain then
+        for _, obj in ipairs(pumpkinRain:GetChildren()) do
+            if obj:IsA("Model") and string.find(string.lower(obj.Name), "pumpkin") then
+                table.insert(targets, obj)
+            end
+        end
+    end
+
+    -- Если нашли цели, начинаем телепортацию
+    if #targets > 0 then
+        for _, target in ipairs(targets) do
+            if not STATE.farm then break end -- Если выключили, прерываемся
+            
+            -- 1. Фиксируем игрока (чтобы не дергался)
+            local oldAnchored = hrp.Anchored
+            hrp.Anchored = true
+            
+            -- 2. Телепортируем к предмету (чуть выше, чтобы подобрать)
+            local targetPos = target:GetPivot().Position
+            hrp.CFrame = CFrame.new(targetPos + Vector3.new(0, 3, 0))
+            
+            -- 3. Ждем полсекунды, чтобы игра засчитала подбор
+            task.wait(0.5)
+            
+            -- 4. Возвращаем как было (если не был зафиксирован, снимаем анкор)
+            if not oldAnchored then
+                hrp.Anchored = false
+            end
         end
     end
 end
@@ -44,11 +75,12 @@ end
 local function setFarm(on)
     STATE.farm = on
     if STATE.farmThr then pcall(task.cancel, STATE.farmThr); STATE.farmThr = nil end
+    
     if on then
         STATE.farmThr = task.spawn(function()
             while STATE.running and STATE.farm do
                 farmStep()
-                task.wait(0.1) -- 10 раз в секунду, чтобы не лагало
+                task.wait(0.5) -- Пауза между поисками новых пачек
             end
         end)
     end
@@ -110,7 +142,7 @@ local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, -150, 0, 20)
 title.Position = UDim2.new(0, 18, 0, 7)
 title.BackgroundTransparency = 1
-title.Text = "EVENT DROP FARMER"
+title.Text = "EVENT FARMER"
 title.TextColor3 = C.text
 title.TextSize = 15
 title.Font = Enum.Font.GothamBold
@@ -154,7 +186,6 @@ content.Position = UDim2.fromOffset(16, 100)
 content.BackgroundTransparency = 1
 content.Parent = main
 
--- Создаем карточку для переключателя
 local function makeCard(parent, height)
     local card = Instance.new("Frame")
     card.LayoutOrder = #parent:GetChildren() + 1
@@ -215,8 +246,8 @@ local function makeSwitch(parent, label, onToggle)
     return {Set = set, Get = function() return state end}
 end
 
--- Добавляем переключатель на страницу
-makeSwitch(content, "Event Drop Farm", setFarm)
+-- Единый переключатель
+makeSwitch(content, "Event Farm (Drop & Pumpkin)", setFarm)
 
 -- ==========================================
 -- ЛОГИКА ОКНА (Drag / Minimize / Close)
@@ -226,7 +257,7 @@ local function expand() main.Visible = true; openBtn.Visible = false end
 minBtn.MouseButton1Click:Connect(minimize)
 killBtn.MouseButton1Click:Connect(function()
     STATE.running = false
-    if STATE.farmThr then pcall(task.cancel, STATE.farmThr) end
+    setFarm(false)
     gui:Destroy()
 end)
 
@@ -269,4 +300,4 @@ openBtn.InputEnded:Connect(function(input)
     end
 end)
 
-print("[Event Drop Farmer] loaded")
+print("[Event Farmer] loaded")
