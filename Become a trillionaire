@@ -1,0 +1,272 @@
+-- ╔══════════════════════════════════════════════════════════╗
+-- ║            EVENT DROP FARMER — Magenta Edition             ║
+-- ╚══════════════════════════════════════════════════════════╝
+local RS       = game:GetService("ReplicatedStorage")
+local WS       = game:GetService("Workspace")
+local Players  = game:GetService("Players")
+local LP       = Players.LocalPlayer
+local Tween    = game:GetService("TweenService")
+local UIS      = game:GetService("UserInputService")
+
+local C = {
+    bg = Color3.fromRGB(14, 10, 16), panel = Color3.fromRGB(22, 16, 26),
+    elem = Color3.fromRGB(32, 22, 38), hover = Color3.fromRGB(48, 30, 56),
+    accent = Color3.fromRGB(230, 0, 160), accent2 = Color3.fromRGB(180, 0, 120),
+    text = Color3.fromRGB(235, 220, 235), dim = Color3.fromRGB(150, 110, 150),
+    stroke = Color3.fromRGB(60, 30, 70), red = Color3.fromRGB(230, 70, 90),
+}
+
+local STATE = { running = true, farm = false }
+
+-- ==========================================
+-- МЕХАНИКА ФАРМА
+-- ==========================================
+local function farmStep()
+    local dropEvent = WS:FindFirstChild("DropEvent")
+    local char = LP.Character
+    if not dropEvent or not char then return end
+    
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+
+    -- Ищем все модели с "Drop" в названии
+    for _, obj in ipairs(dropEvent:GetChildren()) do
+        if obj:IsA("Model") and string.find(string.lower(obj.Name), "drop") then
+            -- Телепортируем прямо в позицию игрока (на уровне пола)
+            local targetCF = hrp.CFrame
+            pcall(function()
+                obj:PivotTo(targetCF)
+            end)
+        end
+    end
+end
+
+local function setFarm(on)
+    STATE.farm = on
+    if STATE.farmThr then pcall(task.cancel, STATE.farmThr); STATE.farmThr = nil end
+    if on then
+        STATE.farmThr = task.spawn(function()
+            while STATE.running and STATE.farm do
+                farmStep()
+                task.wait(0.1) -- 10 раз в секунду, чтобы не лагало
+            end
+        end)
+    end
+end
+
+-- ==========================================
+-- GUI
+-- ==========================================
+local playerGui = LP:WaitForChild("PlayerGui")
+local old = playerGui:FindFirstChild("EventDropUI")
+if old then old:Destroy() end
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "EventDropUI"
+gui.ResetOnSpawn = false
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+gui.IgnoreGuiInset = true
+gui.Parent = playerGui
+
+local openBtn = Instance.new("TextButton")
+openBtn.Size = UDim2.fromOffset(46, 46)
+openBtn.Position = UDim2.new(0, 20, 0, 20)
+openBtn.BackgroundColor3 = C.bg
+openBtn.Text = "M"
+openBtn.TextColor3 = C.accent
+openBtn.TextSize = 22
+openBtn.Font = Enum.Font.GothamBold
+openBtn.AutoButtonColor = false
+openBtn.BorderSizePixel = 0
+openBtn.Visible = false
+openBtn.Parent = gui
+Instance.new("UICorner", openBtn).CornerRadius = UDim.new(0, 10)
+local obs = Instance.new("UIStroke"); obs.Color = C.accent; obs.Thickness = 1.5; obs.Parent = openBtn
+
+local main = Instance.new("Frame")
+main.Size = UDim2.fromOffset(400, 250)
+main.Position = UDim2.new(0.5, -200, 0.5, -125)
+main.BackgroundColor3 = C.bg
+main.BorderSizePixel = 0
+main.Active = true
+main.Parent = gui
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 14)
+local mStroke = Instance.new("UIStroke"); mStroke.Color = C.stroke; mStroke.Thickness = 1; mStroke.Parent = main
+
+local header = Instance.new("Frame")
+header.Size = UDim2.new(1, 0, 0, 46)
+header.BackgroundColor3 = C.panel
+header.BorderSizePixel = 0
+header.Parent = main
+Instance.new("UICorner", header).CornerRadius = UDim.new(0, 14)
+local hMask = Instance.new("Frame")
+hMask.Size = UDim2.new(1, 0, 0, 14)
+hMask.Position = UDim2.new(0, 0, 1, -14)
+hMask.BackgroundColor3 = C.panel
+hMask.BorderSizePixel = 0
+hMask.Parent = header
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -150, 0, 20)
+title.Position = UDim2.new(0, 18, 0, 7)
+title.BackgroundTransparency = 1
+title.Text = "EVENT DROP FARMER"
+title.TextColor3 = C.text
+title.TextSize = 15
+title.Font = Enum.Font.GothamBold
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Parent = header
+
+local subtitle = Instance.new("TextLabel")
+subtitle.Size = UDim2.new(1, -150, 0, 13)
+subtitle.Position = UDim2.new(0, 18, 0, 27)
+subtitle.BackgroundTransparency = 1
+subtitle.Text = "MAGENTA EDITION"
+subtitle.TextColor3 = C.dim
+subtitle.TextSize = 9
+subtitle.Font = Enum.Font.GothamMedium
+subtitle.TextXAlignment = Enum.TextXAlignment.Left
+subtitle.Parent = header
+
+local function hdrBtn(txt, xOff, isRed)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.fromOffset(28, 28)
+    b.Position = UDim2.new(1, xOff, 0.5, -14)
+    b.BackgroundColor3 = C.elem
+    b.Text = txt
+    b.TextColor3 = isRed and C.red or C.dim
+    b.TextSize = 14
+    b.Font = Enum.Font.GothamBold
+    b.AutoButtonColor = false
+    b.BorderSizePixel = 0
+    b.Parent = header
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 7)
+    b.MouseEnter:Connect(function() b.BackgroundColor3 = C.hover; b.TextColor3 = isRed and C.red or C.text end)
+    b.MouseLeave:Connect(function() b.BackgroundColor3 = C.elem; b.TextColor3 = isRed and C.red or C.dim end)
+    return b
+end
+local minBtn = hdrBtn("—", -72, false)
+local killBtn = hdrBtn("X", -40, true)
+
+local content = Instance.new("Frame")
+content.Size = UDim2.new(1, -32, 1, -108)
+content.Position = UDim2.fromOffset(16, 100)
+content.BackgroundTransparency = 1
+content.Parent = main
+
+-- Создаем карточку для переключателя
+local function makeCard(parent, height)
+    local card = Instance.new("Frame")
+    card.LayoutOrder = #parent:GetChildren() + 1
+    card.Size = UDim2.new(1, -3, 0, height)
+    card.BackgroundColor3 = C.panel
+    card.BorderSizePixel = 0
+    card.Parent = parent
+    Instance.new("UICorner", card).CornerRadius = UDim.new(0, 10)
+    local cs = Instance.new("UIStroke"); cs.Color = C.stroke; cs.Thickness = 1; cs.Parent = card
+    return card
+end
+
+local function makeSwitch(parent, label, onToggle)
+    local row = makeCard(parent, 50)
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1, -110, 1, 0)
+    lbl.Position = UDim2.fromOffset(16, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = label
+    lbl.TextColor3 = C.text
+    lbl.TextSize = 13
+    lbl.Font = Enum.Font.GothamBold
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = row
+
+    local sw = Instance.new("TextButton")
+    sw.Size = UDim2.fromOffset(60, 28)
+    sw.Position = UDim2.new(1, -76, 0.5, -14)
+    sw.BackgroundColor3 = C.elem
+    sw.Text = ""
+    sw.AutoButtonColor = false
+    sw.BorderSizePixel = 0
+    sw.Parent = row
+    Instance.new("UICorner", sw).CornerRadius = UDim.new(1, 0)
+    local swS = Instance.new("UIStroke"); swS.Color = C.stroke; swS.Thickness = 1.5; swS.Parent = sw
+    local knob = Instance.new("Frame")
+    knob.Size = UDim2.fromOffset(22, 22)
+    knob.Position = UDim2.new(0, 3, 0.5, -11)
+    knob.BackgroundColor3 = C.dim
+    knob.BorderSizePixel = 0
+    knob.Parent = sw
+    Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
+
+    local state = false
+    local function set(on)
+        state = on
+        Tween:Create(sw, TweenInfo.new(0.16), {BackgroundColor3 = on and C.accent2 or C.elem}):Play()
+        Tween:Create(swS, TweenInfo.new(0.16), {Color = on and C.accent or C.stroke}):Play()
+        Tween:Create(knob, TweenInfo.new(0.16), {
+            Position = on and UDim2.new(1, -25, 0.5, -11) or UDim2.new(0, 3, 0.5, -11),
+            BackgroundColor3 = on and Color3.new(1, 1, 1) or C.dim,
+        }):Play()
+        if onToggle then onToggle(on) end
+    end
+    sw.MouseButton1Click:Connect(function()
+        if STATE.running then set(not state) end
+    end)
+    return {Set = set, Get = function() return state end}
+end
+
+-- Добавляем переключатель на страницу
+makeSwitch(content, "Event Drop Farm", setFarm)
+
+-- ==========================================
+-- ЛОГИКА ОКНА (Drag / Minimize / Close)
+-- ==========================================
+local function minimize() main.Visible = false; openBtn.Visible = true end
+local function expand() main.Visible = true; openBtn.Visible = false end
+minBtn.MouseButton1Click:Connect(minimize)
+killBtn.MouseButton1Click:Connect(function()
+    STATE.running = false
+    if STATE.farmThr then pcall(task.cancel, STATE.farmThr) end
+    gui:Destroy()
+end)
+
+local dragging, dragStart, startPos
+header.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true; dragStart = input.Position; startPos = main.Position
+    end
+end)
+UIS.InputChanged:Connect(function(input)
+    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - dragStart
+        main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
+UIS.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = false
+    end
+end)
+
+local dragO, startO, posO
+openBtn.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragO = true; startO = input.Position; posO = openBtn.Position
+    end
+end)
+openBtn.InputChanged:Connect(function(input)
+    if dragO and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local d = input.Position - startO
+        openBtn.Position = UDim2.new(posO.X.Scale, posO.X.Offset + d.X, posO.Y.Scale, posO.Y.Offset + d.Y)
+    end
+end)
+openBtn.InputEnded:Connect(function(input)
+    if dragO and (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) then
+        dragO = false
+        local dx = math.abs(openBtn.Position.X.Offset - posO.X.Offset)
+        local dy = math.abs(openBtn.Position.Y.Offset - posO.Y.Offset)
+        if dx < 5 and dy < 5 then expand() end
+    end
+end)
+
+print("[Event Drop Farmer] loaded")
