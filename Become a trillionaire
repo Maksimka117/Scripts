@@ -48,27 +48,24 @@ local function farmStep()
         end
     end
 
-    -- Если нашли цели, начинаем телепортацию
+    -- Телепортация
     if #targets > 0 then
         for _, target in ipairs(targets) do
-            if not STATE.farm then break end -- Если выключили, прерываемся
+            if not STATE.farm then break end 
             
-            -- 1. Фиксируем игрока (чтобы не дергался)
-            local oldAnchored = hrp.Anchored
             hrp.Anchored = true
             
-            -- 2. Телепортируем к предмету (чуть выше, чтобы подобрать)
+            -- ТП прямо в модель (без смещения вверх)
             local targetPos = target:GetPivot().Position
-            hrp.CFrame = CFrame.new(targetPos + Vector3.new(0, 3, 0))
+            hrp.CFrame = CFrame.new(targetPos) 
             
-            -- 3. Ждем полсекунды, чтобы игра засчитала подбор
-            task.wait(0.5)
-            
-            -- 4. Возвращаем как было (если не был зафиксирован, снимаем анкор)
-            if not oldAnchored then
-                hrp.Anchored = false
-            end
+            task.wait(0.3) -- Задержка для сбора
         end
+    end
+    
+    -- Отвинчиваем, если всё собрали
+    if not STATE.farm then
+        hrp.Anchored = false
     end
 end
 
@@ -76,13 +73,21 @@ local function setFarm(on)
     STATE.farm = on
     if STATE.farmThr then pcall(task.cancel, STATE.farmThr); STATE.farmThr = nil end
     
+    local char = LP.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    
     if on then
         STATE.farmThr = task.spawn(function()
             while STATE.running and STATE.farm do
                 farmStep()
-                task.wait(0.5) -- Пауза между поисками новых пачек
+                task.wait(0.2)
             end
+            -- Когда цикл прервался (выключили), снимаем фиксацию
+            if hrp then hrp.Anchored = false end
         end)
+    else
+        -- Мгновенное снятие фиксации при выключении
+        if hrp then hrp.Anchored = false end
     end
 end
 
