@@ -23,7 +23,7 @@ local C = {
 local STATE = { 
     running = true, farm = false, autoIndex = false, autoUpgrCash = false, autoUpgrGem = false, 
     autoPotion = false, autoRebirth = false, autoPrestige = false, rebirthReady = false,
-    autoBuyAura = false, autoBuyTrail = false, autoAbility = false
+    autoBuyAura = false, autoBuyTrail = false, autoAbility = false, autoPet = false
 }
 
 local Remotes = RS:FindFirstChild("Remotes")
@@ -34,6 +34,9 @@ local BuyRebirth = Remotes and Remotes:FindFirstChild("BuyRebirth")
 local BuyPrestige = Remotes and Remotes:FindFirstChild("BuyPrestige")
 local BuyAuraRemote = Remotes and Remotes:FindFirstChild("BuyAura")
 local BuyTrailRemote = Remotes and Remotes:FindFirstChild("BuyTrail")
+local RollPets = Remotes and Remotes:FindFirstChild("RollPets")
+local MergeAllPets = Remotes and Remotes:FindFirstChild("MergeAllPets")
+local EquipPet = Remotes and Remotes:FindFirstChild("EquipPet")
 
 local leaderstats = LP:WaitForChild("leaderstats")
 local RebirthVal = leaderstats:WaitForChild("Rebirth")
@@ -51,43 +54,58 @@ if others then
 end
 
 local UPGRADE_LIST = {
-    { id = "CashMultiplier", name = "Cash Multiplier" }, { id = "PlayerWalkspeed", name = "Walkspeed" },
-    { id = "SpawnSpeed", name = "Spawn Speed" }, { id = "CapacityLimit", name = "Capacity Limit" },
-    { id = "FriendBoost", name = "Friend Boost" }, { id = "DropAmount", name = "Drop Amount" },
-    { id = "PetEquipUpgrade", name = "Pet Equip" }, { id = "TreatsUpgrade", name = "Treats Chance" },
-    { id = "PotionsUpgrade", name = "Potions Chance" }, { id = "AllOGUpgrade", name = "All OG Chance" },
-    { id = "GoldenUpgrade", name = "Golden Chance" }, { id = "DarkMatterUpgrade", name = "Dark Matter" },
-    { id = "PrismaticUpgrade", name = "Prismatic" }, { id = "GiantUpgrade", name = "Giant Chance" },
-    { id = "GiantGoldenUpgrade", name = "Giant Golden" }, { id = "GiantDarkMatterUpgrade", name = "Giant Dark Matter" },
-    { id = "GiantPrismaticUpgrade", name = "Giant Prismatic" }, { id = "GiantFrozenUpgrade", name = "Giant Frozen" },
-    { id = "GiantCorruptedUpgrade", name = "Giant Corrupted" }, { id = "GiantCelestialUpgrade", name = "Giant Celestial" },
-    { id = "GiantSingularityUpgrade", name = "Giant Singularity" }, { id = "FrozenUpgrade", name = "Frozen Chance" },
-    { id = "CorruptedUpgrade", name = "Corrupted Chance" }, { id = "CelestialUpgrade", name = "Celestial Chance" },
-    { id = "SingularityUpgrade", name = "Singularity" }, { id = "GemDropUpgrade", name = "Gem Chance" },
-    { id = "GemMultiplierUpgrade", name = "Gem Multiplier" }, { id = "StreakTimeUpgrade", name = "Streak Time" },
+    { id = "CashMultiplier", name = "Cash Multiplier", isGem = false },
+    { id = "PlayerWalkspeed", name = "Walkspeed", isGem = false },
+    { id = "SpawnSpeed", name = "Spawn Speed", isGem = false },
+    { id = "CapacityLimit", name = "Capacity Limit", isGem = false },
+    { id = "FriendBoost", name = "Friend Boost", isGem = false },
+    { id = "DropAmount", name = "Drop Amount", isGem = false },
+    
+    { id = "PetEquipUpgrade", name = "Pet Equip", isGem = true },
+    { id = "TreatsUpgrade", name = "Treats Chance", isGem = true },
+    { id = "PotionsUpgrade", name = "Potions Chance", isGem = true },
+    { id = "AllOGUpgrade", name = "All OG Chance", isGem = true },
+    { id = "GoldenUpgrade", name = "Golden Chance", isGem = true },
+    { id = "DarkMatterUpgrade", name = "Dark Matter", isGem = true },
+    { id = "PrismaticUpgrade", name = "Prismatic", isGem = true },
+    { id = "GiantUpgrade", name = "Giant Chance", isGem = true },
+    
+    { id = "GiantGoldenUpgrade", name = "Giant Golden", isGem = true },
+    { id = "GiantDarkMatterUpgrade", name = "Giant Dark Matter", isGem = true },
+    { id = "GiantPrismaticUpgrade", name = "Giant Prismatic", isGem = true },
+    { id = "GiantFrozenUpgrade", name = "Giant Frozen", isGem = true },
+    { id = "GiantCorruptedUpgrade", name = "Giant Corrupted", isGem = true },
+    { id = "GiantCelestialUpgrade", name = "Giant Celestial", isGem = true },
+    { id = "GiantSingularityUpgrade", name = "Giant Singularity", isGem = true },
+    
+    { id = "FrozenUpgrade", name = "Frozen Chance", isGem = true },
+    { id = "CorruptedUpgrade", name = "Corrupted Chance", isGem = true },
+    { id = "CelestialUpgrade", name = "Celestial Chance", isGem = true },
+    { id = "SingularityUpgrade", name = "Singularity", isGem = true },
+    
+    { id = "GemDropUpgrade", name = "Gem Chance", isGem = true },
+    { id = "GemMultiplierUpgrade", name = "Gem Multiplier", isGem = true },
+    { id = "StreakTimeUpgrade", name = "Streak Time", isGem = true },
+    
+    { id = "CosmicUpgrade", name = "Cosmic Chance", isGem = true },
+    { id = "GiantCosmicUpgrade", name = "Giant Cosmic", isGem = true },
+    { id = "NeonUpgrade", name = "Neon Chance", isGem = true },
+    { id = "GiantNeonUpgrade", name = "Giant Neon", isGem = true },
+    { id = "HauntedUpgrade", name = "Haunted Chance", isGem = true },
+    { id = "GiantHauntedUpgrade", name = "Giant Haunted", isGem = true },
+    { id = "MoldedUpgrade", name = "Molded Chance", isGem = true },
+    { id = "GiantMoldedUpgrade", name = "Giant Molded", isGem = true },
 }
+
 local SELECTED_UPGRADES = {}
 for _, u in ipairs(UPGRADE_LIST) do SELECTED_UPGRADES[u.id] = true end
-local POTIONS = { "WalkSpeedPotion", "TreatsPotion", "SuperLuckPotion", "MutationPotion", "LuckPotion", "GemPotion", "CashPotion" }
 
--- Кулдауны абилок
-local ABILITY_COOLDOWNS = {
-    RichMan = 30, Gust = 5, Refiller = 7, Conveyor = 60,
-    Wave = 10, Magnet = 25, Haste = 30, Prospector = 90, GoldenConveyor = 60
-}
-
--- ==========================================
--- МЕХАНИКИ
--- ==========================================
 local function getSellPoints()
     local sell = WS:FindFirstChild("SellBlockFolder") and WS.SellBlockFolder:FindFirstChild("SellBlock")
     if not sell then return {} end
     local cf, sz = sell.CFrame, sell.Size
     local offX, offZ = sz.X * 0.5 * 0.65, sz.Z * 0.5 * 0.65
-    return { 
-        cf * CFrame.new(offX, 0, offZ), cf * CFrame.new(-offX, 0, offZ), 
-        cf * CFrame.new(offX, 0, -offZ), cf * CFrame.new(-offX, 0, -offZ) 
-    }
+    return { cf * CFrame.new(offX, 0, offZ), cf * CFrame.new(-offX, 0, offZ), cf * CFrame.new(offX, 0, -offZ), cf * CFrame.new(-offX, 0, -offZ) }
 end
 
 local function farmStep()
@@ -129,10 +147,6 @@ local function setAutoIndex(on)
     if on then STATE.indexThr = task.spawn(function() while STATE.running and STATE.autoIndex do pcall(function() ClaimIndex:FireServer("ALL") end); task.wait(3) end end) end
 end
 
-local function isGemUpgrade(u)
-    return u.id:find("Upgrade", 1, true) ~= nil or u.id:find("Gem", 1, true) ~= nil or u.id:find("Chance", 1, true) ~= nil
-end
-
 local function setAutoUpgradeMode(on, gemMode)
     local stateKey = gemMode and "autoUpgrGem" or "autoUpgrCash"
     local threadKey = gemMode and "upgrGemThr" or "upgrCashThr"
@@ -144,7 +158,7 @@ local function setAutoUpgradeMode(on, gemMode)
                 if not (not gemMode and STATE.rebirthReady) then
                     for _, u in ipairs(UPGRADE_LIST) do
                         if not STATE.running or not STATE[stateKey] then break end
-                        if isGemUpgrade(u) == gemMode and SELECTED_UPGRADES[u.id] then
+                        if u.isGem == gemMode and SELECTED_UPGRADES[u.id] then
                             pcall(function() if BuyUpgrade then BuyUpgrade:FireServer(u.id, not gemMode) end end)
                             task.wait(0.15)
                         end
@@ -164,7 +178,7 @@ local function setAutoUpgradeGem(on) setAutoUpgradeMode(on, true) end
 local function setAutoPotion(on)
     STATE.autoPotion = on
     if STATE.potionThr then pcall(task.cancel, STATE.potionThr); STATE.potionThr = nil end
-    if on then STATE.potionThr = task.spawn(function() while STATE.running and STATE.autoPotion do for _, p in ipairs(POTIONS) do pcall(function() UsePotion:InvokeServer(p, "All") end); task.wait(0.2) end; task.wait(5) end end) end
+    if on then STATE.potionThr = task.spawn(function() while STATE.running and STATE.autoPotion do for _, p in ipairs({"WalkSpeedPotion", "TreatsPotion", "SuperLuckPotion", "MutationPotion", "LuckPotion", "GemPotion", "CashPotion"}) do pcall(function() UsePotion:InvokeServer(p, "All") end); task.wait(0.2) end; task.wait(5) end end) end
 end
 
 local function setAutoRebirth(on)
@@ -207,41 +221,73 @@ local function setAutoPrestige(on)
     end
 end
 
--- AUTO ABILITY (Умная)
+local ABILITY_COOLDOWNS = { RichMan = 30, Gust = 5, Refiller = 7, Conveyor = 60, Wave = 10, Magnet = 25, Haste = 30, Prospector = 90, GoldenConveyor = 60 }
+
 local function setAutoAbility(on)
     STATE.autoAbility = on
     if STATE.abilityThr then pcall(task.cancel, STATE.abilityThr); STATE.abilityThr = nil end
-    
     if on then
         STATE.abilityThr = task.spawn(function()
             while STATE.running and STATE.autoAbility do
                 local currentAbility = "Refiller"
                 local PlayerGui = LP:FindFirstChild("PlayerGui")
-                
                 if PlayerGui then
                     local abilityText = PlayerGui.Main.CenterBar.CenterFrame.MainFrame.AbilityBtn:FindFirstChild("AbilityText")
                     if abilityText and abilityText:IsA("TextLabel") and abilityText.Text ~= "" then
                         currentAbility = string.gsub(abilityText.Text, "[%[%]]", "")
                     end
                 end
-
                 pcall(function()
                     VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
                     task.wait(0.05)
                     VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
                 end)
-
                 local cd = ABILITY_COOLDOWNS[currentAbility] or 5
-                if LP:GetAttribute("OwnsGamepass_FasterAbilityCooldowns") then
-                    cd = cd * 0.85
-                end
+                if LP:GetAttribute("OwnsGamepass_FasterAbilityCooldowns") then cd = cd * 0.85 end
                 task.wait(cd + 1)
             end
         end)
     end
 end
 
--- AUTO BUY AURA & TRAIL
+-- AUTO PET (ИСПРАВЛЕННЫЙ)
+local function setAutoPet(on)
+    STATE.autoPet = on
+    if STATE.petThr then pcall(task.cancel, STATE.petThr); STATE.petThr = nil end
+    
+    if on then
+        STATE.petThr = task.spawn(function()
+            while STATE.running and STATE.autoPet do
+                local treatsObj = LP.HiddenStats:FindFirstChild("Treats")
+                
+                while STATE.running and STATE.autoPet and treatsObj and treatsObj.Value >= 10 do
+                    local success = pcall(function() 
+                        if RollPets then RollPets:InvokeServer("Five") end 
+                    end)
+                    if not success then break end 
+                    task.wait(1.5)
+                end
+                
+                for i = 1, 10 do
+                    if not STATE.running or not STATE.autoPet then break end
+                    pcall(function() 
+                        if MergeAllPets then MergeAllPets:InvokeServer(false) end 
+                    end)
+                    task.wait(0.8) 
+                end
+                
+                if STATE.running and STATE.autoPet then
+                    pcall(function() 
+                        if EquipPet then EquipPet:FireServer(nil, "Best") end 
+                    end)
+                end
+                
+                task.wait(5) 
+            end
+        end)
+    end
+end
+
 local AuraShop = require(RS.Others:WaitForChild("AuraShop"))
 local TrailShop = require(RS.Others:WaitForChild("TrailShop"))
 local GemVal = LP.HiddenStats:WaitForChild("Gem")
@@ -286,9 +332,6 @@ local function setAutoBuyTrail(on)
     if on then STATE.trailThr = task.spawn(function() while STATE.running and STATE.autoBuyTrail do autoBuyTrails(); task.wait(2) end end) end
 end
 
--- ==========================================
--- GUI
--- ==========================================
 local playerGui = LP:WaitForChild("PlayerGui")
 local old = playerGui:FindFirstChild("ItemFarmerUI")
 if old then old:Destroy() end
@@ -558,6 +601,7 @@ end
 makeInfo(mainPage, "MAGENTA EDITION  •  Farming controls", 32)
 local farmSwitch = makeSwitch(mainPage, "Farm ON / OFF", setFarm)
 local indexSwitch = makeSwitch(mainPage, "Auto Index", setAutoIndex)
+local petSwitch = makeSwitch(mainPage, "Auto Pet (Roll + Merge + Equip)", setAutoPet)
 local abilitySwitch = makeSwitch(mainPage, "Auto Ability (E)", setAutoAbility)
 local auraSwitch = makeSwitch(mainPage, "Auto Buy Aura", setAutoBuyAura)
 local trailSwitch = makeSwitch(mainPage, "Auto Buy Trail", setAutoBuyTrail)
@@ -646,7 +690,7 @@ local function makeUpgradeDropdown(parent, titleText, gemMode)
     local rowControls = {}
     local function setVisibleClass(value)
         for _, u in ipairs(UPGRADE_LIST) do
-            if isGemUpgrade(u) == gemMode then
+            if u.isGem == gemMode then
                 SELECTED_UPGRADES[u.id] = value
                 local row = rowControls[u.id]
                 if row then
@@ -660,9 +704,8 @@ local function makeUpgradeDropdown(parent, titleText, gemMode)
     smallButton("DESELECT ALL", 0.5, 0.5, function() setVisibleClass(false) end)
 
     local itemOrder = 1
-    for _, upgrade in ipairs(UPGRADE_LIST) do
-        local u = upgrade
-        if isGemUpgrade(u) == gemMode then
+    for _, u in ipairs(UPGRADE_LIST) do
+        if u.isGem == gemMode then
             local row = Instance.new("TextButton")
             row.LayoutOrder = itemOrder + 1
             itemOrder += 1
@@ -694,26 +737,12 @@ makeUpgradeDropdown(mainPage, "GEM UPGRADES  •  SELECT ITEMS", true)
 
 makeInfo(setPage, "SCRIPT CONTROL", 32)
 local function stopAll()
-    setFarm(false)
-    setAutoIndex(false)
-    setAutoPotion(false)
-    setAutoRebirth(false)
-    setAutoPrestige(false)
-    setAutoUpgradeCash(false)
-    setAutoUpgradeGem(false)
-    setAutoBuyAura(false)
-    setAutoBuyTrail(false)
-    setAutoAbility(false)
-    farmSwitch.Set(false)
-    indexSwitch.Set(false)
-    potionSwitch.Set(false)
-    rebirthSwitch.Set(false)
-    prestigeSwitch.Set(false)
-    cashUpgradeSwitch.Set(false)
-    gemUpgradeSwitch.Set(false)
-    auraSwitch.Set(false)
-    trailSwitch.Set(false)
-    abilitySwitch.Set(false)
+    setFarm(false); setAutoIndex(false); setAutoPotion(false); setAutoRebirth(false); setAutoPrestige(false)
+    setAutoUpgradeCash(false); setAutoUpgradeGem(false); setAutoBuyAura(false); setAutoBuyTrail(false); setAutoAbility(false)
+    setAutoPet(false)
+    farmSwitch.Set(false); indexSwitch.Set(false); potionSwitch.Set(false); rebirthSwitch.Set(false); prestigeSwitch.Set(false)
+    cashUpgradeSwitch.Set(false); gemUpgradeSwitch.Set(false); auraSwitch.Set(false); trailSwitch.Set(false); abilitySwitch.Set(false)
+    petSwitch.Set(false)
 end
 
 makeActionButton(setPage, "STOP ALL TASKS", stopAll, C.red)
@@ -722,7 +751,7 @@ makeActionButton(setPage, "DESTROY GUI", function()
     stopAll()
     gui:Destroy()
 end, C.red)
-makeInfo(setPage, "Minimize with —. The M button reopens the window. Close/Destroy stops all automation.", 44)
+makeInfo(setPage, "Minimize with —. The M button reopens the window.", 44)
 
 for i, t in ipairs(TABS) do
     t.btn.BackgroundColor3 = i == 1 and C.accent2 or C.elem
@@ -778,15 +807,13 @@ openBtn.InputEnded:Connect(function(input)
     end
 end)
 
--- ==========================================
--- АВТОСОХРАНЕНИЕ И АВТОЗАГРУЗКА КОНФИГА
--- ==========================================
 local CONFIG_FILE = "ItemFarmer_Config.json"
 local GUI_Toggles = {
     Farm = farmSwitch, AutoIndex = indexSwitch, AutoPotion = potionSwitch,
     AutoRebirth = rebirthSwitch, AutoPrestige = prestigeSwitch,
     AutoUpgradeCash = cashUpgradeSwitch, AutoUpgradeGem = gemUpgradeSwitch,
     AutoAura = auraSwitch, AutoTrail = trailSwitch, AutoAbility = abilitySwitch,
+    AutoPet = petSwitch,
 }
 
 task.spawn(function()
